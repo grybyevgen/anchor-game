@@ -1,0 +1,215 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--tg-theme-bg-color, #ffffff);
+    color: var(--tg-theme-text-color, #000000);
+    padding: 10px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: var(--tg-theme-header-bg-color, #2481cc);
+    color: var(--tg-theme-header-text-color, #ffffff);
+    border-radius: 10px;
+    margin-bottom: 15px;
+}
+
+.header h1 {
+    font-size: 20px;
+}
+
+.user-info {
+    display: flex;
+    gap: 15px;
+    font-size: 14px;
+}
+
+.tabs {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 15px;
+    overflow-x: auto;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    background: var(--tg-theme-button-color, #2481cc);
+    color: var(--tg-theme-button-text-color, #ffffff);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.tab-btn.active {
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+    color: var(--tg-theme-text-color, #000000);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.ships-list, .ports-list, .market-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.ship-card, .port-card, .market-item {
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+    padding: 15px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.ship-card h3, .port-card h3 {
+    margin-bottom: 10px;
+    color: var(--tg-theme-text-color, #000000);
+}
+
+.ship-info, .port-info {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 14px;
+}
+
+.stat {
+    display: flex;
+    justify-content: space-between;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(0,0,0,0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 5px;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #4caf50;
+    transition: width 0.3s;
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: var(--tg-theme-button-color, #2481cc);
+    color: var(--tg-theme-button-text-color, #ffffff);
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.btn-secondary {
+    padding: 8px 15px;
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+    color: var(--tg-theme-text-color, #000000);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn-danger {
+    background: #f44336;
+    color: white;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background: var(--tg-theme-bg-color, #ffffff);
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #000;
+}
+
+.cargo-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.cargo-option {
+    padding: 10px;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+}
+
+.cargo-option.selected {
+    border-color: var(--tg-theme-button-color, #2481cc);
+}
+
+.port-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.port-option {
+    padding: 10px;
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.port-option:hover {
+    background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+}
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #999;
+}

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Морское Судоходство</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Заголовок -->
+        <header class="header">
+            <h1>⚓ Морское Судоходство</h1>
+            <div class="user-info">
+                <span id="coins">💰 0</span>
+                <span id="username"></span>
+            </div>
+        </header>
+
+        <!-- Навигация -->
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="ships">🚢 Судна</button>
+            <button class="tab-btn" data-tab="ports">🏭 Порты</button>
+            <button class="tab-btn" data-tab="market">📦 Рынок</button>
+            <button class="tab-btn" data-tab="fleet">⚓ Флот</button>
+        </nav>
+
+        <!-- Вкладка: Мои судна -->
+        <div id="ships-tab" class="tab-content active">
+            <h2>Мои судна</h2>
+            <div id="ships-list" class="ships-list">
+                <!-- Судна будут загружены динамически -->
+            </div>
+            <button id="buy-ship-btn" class="btn-primary">Купить судно</button>
+        </div>
+
+        <!-- Вкладка: Порты -->
+        <div id="ports-tab" class="tab-content">
+            <h2>Порты</h2>
+            <div id="ports-list" class="ports-list">
+                <!-- Порты будут загружены динамически -->
+            </div>
+        </div>
+
+        <!-- Вкладка: Рынок -->
+        <div id="market-tab" class="tab-content">
+            <h2>Рынок грузов</h2>
+            <div id="market-list" class="market-list">
+                <!-- Грузы на рынке -->
+            </div>
+        </div>
+
+        <!-- Вкладка: Флот -->
+        <div id="fleet-tab" class="tab-content">
+            <h2>Мой флот</h2>
+            <div id="fleet-stats" class="fleet-stats">
+                <!-- Статистика флота -->
+            </div>
+        </div>
+
+        <!-- Модальное окно для судна -->
+        <div id="ship-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="modal-title">Управление судном</h2>
+                <div id="modal-body"></div>
+            </div>
+        </div>
+
+        <!-- Модальное окно для порта -->
+        <div id="port-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="port-modal-title">Порт</h2>
+                <div id="port-modal-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="telegram-web-app.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
