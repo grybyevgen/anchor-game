@@ -69,14 +69,18 @@ function telegramAuthMiddleware(req, res, next) {
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
     if (!botToken) {
-        console.warn('⚠️  TELEGRAM_BOT_TOKEN не установлен, аутентификация пропущена');
+        // Токен не установлен - пропускаем аутентификацию
+        // Предупреждение выводится только при старте сервера
         return next();
     }
 
     if (!initData) {
         // Для внутренних API запросов можно использовать другой метод аутентификации
         // Пока разрешаем, но можно ужесточить
-        console.warn('⚠️  initData не предоставлен');
+        // Логируем только в режиме разработки
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('⚠️  initData не предоставлен');
+        }
         return next();
     }
 
