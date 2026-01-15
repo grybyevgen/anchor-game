@@ -1,5 +1,5 @@
 // Конфигурация API
-const API_URL = 'http://localhost:3000/api'; // Замените на ваш URL
+const API_URL = 'http://anchor-game-production.up.railway.app'; // Замените на ваш URL
 
 // Состояние приложения
 let currentUser = null;
