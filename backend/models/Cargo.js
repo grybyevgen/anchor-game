@@ -1,4 +1,5 @@
 const { getSupabase } = require('../config/database');
+const { AppError } = require('../middleware/errorHandler');
 
 class Cargo {
     constructor(data) {
@@ -85,7 +86,7 @@ class Cargo {
         if (cargoError) throw cargoError;
         
         if (cargo.is_sold) {
-            throw new Error('Груз уже продан');
+            throw new AppError('Груз уже продан', 400, 'CARGO_ALREADY_SOLD');
         }
         
         // Получаем покупателя
@@ -98,7 +99,7 @@ class Cargo {
         if (buyerError) throw buyerError;
         
         if (buyer.coins < cargo.price) {
-            throw new Error('Недостаточно монет');
+            throw new AppError('Недостаточно монет', 400, 'INSUFFICIENT_FUNDS');
         }
         
         // Списываем монеты у покупателя
