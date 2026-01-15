@@ -16,7 +16,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Trust proxy для работы за прокси (Railway, Heroku и т.д.)
-app.set('trust proxy', true);
+// 1 означает доверять только одному прокси перед приложением
+app.set('trust proxy', 1);
 
 // Rate limiting
 const limiter = rateLimit({
@@ -28,6 +29,10 @@ const limiter = rateLimit({
     },
     standardHeaders: true,
     legacyHeaders: false,
+    // Отключаем валидацию trust proxy для работы за прокси
+    validate: {
+        trustProxy: false
+    }
 });
 
 // Middleware
