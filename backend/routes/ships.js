@@ -4,7 +4,7 @@ const Ship = require('../models/Ship');
 const User = require('../models/User');
 const Port = require('../models/Port');
 const gameConfig = require('../config/gameConfig');
-const { sendShipToPort, loadCargo, unloadCargo, repairShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
+const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
 const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
 const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
 
@@ -132,6 +132,26 @@ router.post('/:shipId/repair', validateUUID('shipId'), asyncHandler(async (req, 
     await checkShipTravel(shipId);
     
     const result = await repairShip(shipId);
+    res.json(result);
+}));
+
+// Заправить судно (бункеровка)
+router.post('/:shipId/refuel', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const { cargoId, amount } = req.body;
+    
+    if (!cargoId) {
+        return res.status(400).json({ success: false, error: 'cargoId обязателен' });
+    }
+    
+    if (!amount || amount <= 0) {
+        return res.status(400).json({ success: false, error: 'amount должен быть больше 0' });
+    }
+    
+    // Проверяем завершенные путешествия перед заправкой
+    await checkShipTravel(shipId);
+    
+    const result = await refuelShip(shipId, cargoId, amount);
     res.json(result);
 }));
 

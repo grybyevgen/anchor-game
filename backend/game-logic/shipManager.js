@@ -270,11 +270,123 @@ async function repairShip(shipId) {
     }
 }
 
+async function refuelShip(shipId, cargoId, amount) {
+    const ship = await Ship.findById(shipId);
+    if (!ship) {
+        return { success: false, error: 'Судно не найдено' };
+    }
+
+    if (ship.isTraveling) {
+        return { success: false, error: 'Судно в пути' };
+    }
+
+    // Получаем нефть с рынка
+    const { getSupabase } = require('../config/database');
+    const supabase = getSupabase();
+    
+    const { data: cargo, error: cargoError } = await supabase
+        .from('market_cargo')
+        .select('*')
+        .eq('id', cargoId)
+        .eq('cargo_type', 'oil')
+        .eq('port_id', ship.currentPortId)
+        .eq('is_sold', false)
+        .single();
+    
+    if (cargoError || !cargo) {
+        return { success: false, error: 'Нефть не найдена на рынке в этом порту' };
+    }
+
+    // Проверка количества
+    if (!amount || amount <= 0) {
+        return { success: false, error: 'Количество нефти должно быть больше 0' };
+    }
+
+    if (amount > cargo.amount) {
+        return { success: false, error: `Недостаточно нефти на рынке. Доступно: ${cargo.amount}` };
+    }
+
+    // Вычисляем сколько топлива можно заправить (не больше максимума)
+    const fuelNeeded = ship.maxFuel - ship.fuel;
+    if (fuelNeeded <= 0) {
+        return { success: false, error: 'Судно уже полностью заправлено' };
+    }
+
+    const actualAmount = Math.min(amount, fuelNeeded); // Реальное количество для заправки
+    
+    // Вычисляем цену за единицу и общую цену
+    const pricePerUnit = Math.floor(cargo.price / cargo.amount);
+    const totalPrice = pricePerUnit * actualAmount;
+
+    // Получаем пользователя
+    const user = await User.findById(ship.userId);
+    if (!user) {
+        return { success: false, error: 'Пользователь не найден' };
+    }
+
+    if (user.coins < totalPrice) {
+        return { success: false, error: 'Недостаточно монет' };
+    }
+
+    try {
+        // Списываем деньги у покупателя
+        await supabase.rpc('spend_user_coins', {
+            user_uuid: ship.userId,
+            amount: totalPrice
+        });
+
+        // Начисляем монеты продавцу
+        await supabase.rpc('add_user_coins', {
+            user_uuid: cargo.seller_id,
+            amount: totalPrice
+        });
+
+        // Заправляем судно
+        ship.fuel = Math.min(ship.fuel + actualAmount, ship.maxFuel);
+        await ship.save();
+
+        // Обновляем рынок
+        const remainingAmount = cargo.amount - actualAmount;
+        if (remainingAmount === 0) {
+            // Если куплено всё - помечаем как проданный
+            await supabase
+                .from('market_cargo')
+                .update({
+                    is_sold: true,
+                    sold_to: ship.userId,
+                    sold_at: new Date().toISOString()
+                })
+                .eq('id', cargoId);
+        } else {
+            // Если куплена часть - уменьшаем количество и обновляем цену
+            const remainingPrice = pricePerUnit * remainingAmount;
+            await supabase
+                .from('market_cargo')
+                .update({
+                    amount: remainingAmount,
+                    price: remainingPrice
+                })
+                .eq('id', cargoId);
+        }
+
+        return { 
+            success: true, 
+            ship, 
+            fueled: actualAmount,
+            cost: totalPrice
+        };
+    } catch (error) {
+        console.error('Ошибка при заправке судна:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     sendShipToPort,
     loadCargo,
     unloadCargo,
     repairShip,
+    refuelShip,
     checkAndCompleteTravels,
     checkShipTravel
 };
