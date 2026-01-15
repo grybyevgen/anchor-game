@@ -1,5 +1,6 @@
 const { getSupabase } = require('../config/database');
 const { AppError } = require('../middleware/errorHandler');
+const Ship = require('./Ship');
 
 class Cargo {
     constructor(data) {
@@ -101,7 +102,64 @@ class Cargo {
         if (buyer.coins < cargo.price) {
             throw new AppError('Недостаточно монет', 400, 'INSUFFICIENT_FUNDS');
         }
+
+        // Определяем тип судна по типу груза
+        const cargoToShipType = {
+            'oil': 'tanker',
+            'materials': 'cargo',
+            'provisions': 'supply'
+        };
+
+        const requiredShipType = cargoToShipType[cargo.cargo_type];
+        if (!requiredShipType) {
+            throw new AppError('Неизвестный тип груза', 400, 'INVALID_CARGO_TYPE');
+        }
+
+        // Проверяем завершенные путешествия перед поиском судна
+        const { checkAndCompleteTravels } = require('../game-logic/shipManager');
+        await checkAndCompleteTravels();
+
+        // Ищем подходящее судно покупателя в порту
+        const { data: ships, error: shipsError } = await supabase
+            .from('ships')
+            .select('*')
+            .eq('user_id', buyerId)
+            .eq('current_port_id', cargo.port_id)
+            .eq('type', requiredShipType)
+            .eq('is_traveling', false)
+            .is('cargo_type', null)
+            .limit(1);
         
+        if (shipsError) throw shipsError;
+
+        if (!ships || ships.length === 0) {
+            const shipTypeNames = {
+                'tanker': 'танкер',
+                'cargo': 'грузовое судно',
+                'supply': 'снабженец'
+            };
+            throw new AppError(
+                `У вас нет подходящего судна в порту для перевозки этого груза. ` +
+                `Требуется ${shipTypeNames[requiredShipType]} в порту с грузом, ` +
+                `которое не занято и не в пути.`,
+                400,
+                'NO_SHIP_IN_PORT'
+            );
+        }
+
+        // Загружаем судно как объект
+        const ship = await Ship.findById(ships[0].id);
+        if (!ship) {
+            throw new AppError('Судно не найдено', 404, 'SHIP_NOT_FOUND');
+        }
+
+        // Загружаем груз на судно
+        ship.cargo = {
+            type: cargo.cargo_type,
+            amount: cargo.amount
+        };
+        await ship.save();
+
         // Списываем монеты у покупателя
         await supabase.rpc('spend_user_coins', {
             user_uuid: buyerId,
@@ -128,7 +186,7 @@ class Cargo {
         
         if (updateError) throw updateError;
         
-        return { success: true, cargo: new Cargo(updatedCargo) };
+        return { success: true, cargo: new Cargo(updatedCargo), ship };
     }
 
     static async addToMarket(cargoData) {
