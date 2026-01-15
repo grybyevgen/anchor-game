@@ -30,12 +30,20 @@ const validateUserInit = [
 ];
 
 /**
- * Валидация для покупки судна
+ * Валидация для покупки судна (поддерживает и UUID и telegramId)
  */
 const validateBuyShip = [
     body('userId')
         .notEmpty().withMessage('userId обязателен')
-        .isUUID().withMessage('userId должен быть UUID'),
+        .custom((value) => {
+            // Может быть UUID или число (telegramId)
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+            const isNumber = /^[0-9]+$/.test(value);
+            if (!isUUID && !isNumber) {
+                throw new Error('userId должен быть UUID или числом');
+            }
+            return true;
+        }),
     body('type')
         .notEmpty().withMessage('type обязателен')
         .isIn(['tanker', 'cargo', 'supply']).withMessage('Неверный тип судна'),
@@ -75,7 +83,7 @@ const validateLoadCargo = [
 ];
 
 /**
- * Валидация для покупки груза с рынка
+ * Валидация для покупки груза с рынка (поддерживает и UUID и telegramId)
  */
 const validateBuyCargo = [
     param('cargoId')
@@ -83,7 +91,15 @@ const validateBuyCargo = [
         .isUUID().withMessage('cargoId должен быть UUID'),
     body('userId')
         .notEmpty().withMessage('userId обязателен')
-        .isUUID().withMessage('userId должен быть UUID'),
+        .custom((value) => {
+            // Может быть UUID или число (telegramId)
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+            const isNumber = /^[0-9]+$/.test(value);
+            if (!isUUID && !isNumber) {
+                throw new Error('userId должен быть UUID или числом');
+            }
+            return true;
+        }),
     validate
 ];
 
