@@ -137,12 +137,36 @@ async function loadCargo(shipId, cargoType, amount) {
         return { success: false, error: 'Этот тип судна не может перевозить данный груз' };
     }
 
-    ship.cargo = { type: cargoType, amount };
-    await ship.save();
+    // Вычисляем стоимость груза (цена за единицу * количество)
+    const cargoPrice = (cargo.price || 0) * amount;
     
-    await port.removeCargo(cargoType, amount);
+    // Получаем пользователя
+    const user = await User.findById(ship.userId);
+    if (!user) {
+        return { success: false, error: 'Пользователь не найден' };
+    }
     
-    return { success: true, ship };
+    // Проверяем баланс
+    if (user.coins < cargoPrice) {
+        return { success: false, error: 'Недостаточно денег' };
+    }
+    
+    // Списываем деньги
+    try {
+        await user.spendCoins(cargoPrice);
+        
+        // Загружаем груз на судно
+        ship.cargo = { type: cargoType, amount };
+        await ship.save();
+        
+        // Удаляем груз из порта
+        await port.removeCargo(cargoType, amount);
+        
+        return { success: true, ship };
+    } catch (error) {
+        console.error('Ошибка при загрузке груза:', error);
+        throw error;
+    }
 }
 
 async function unloadCargo(shipId) {
