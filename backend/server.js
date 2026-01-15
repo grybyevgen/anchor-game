@@ -154,6 +154,11 @@ app.listen(PORT, () => {
     console.log(`📝 Режим: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔐 Аутентификация Telegram: ${process.env.DISABLE_TELEGRAM_AUTH === 'true' ? 'ОТКЛЮЧЕНА ⚠️' : 'ВКЛЮЧЕНА'}`);
     
+    // Предупреждение о токене выводится только один раз при старте
+    if (!process.env.TELEGRAM_BOT_TOKEN && process.env.DISABLE_TELEGRAM_AUTH !== 'true') {
+        console.warn('⚠️  TELEGRAM_BOT_TOKEN не установлен, аутентификация будет пропущена для всех запросов');
+    }
+    
     // Запускаем периодическую проверку завершенных путешествий
     const { checkAndCompleteTravels } = require('./game-logic/shipManager');
     setInterval(async () => {
