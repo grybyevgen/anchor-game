@@ -100,6 +100,12 @@ const validateBuyCargo = [
             }
             return true;
         }),
+    body('amount')
+        .optional()
+        .isInt({ 
+            min: 1, 
+            max: 100 
+        }).withMessage('amount должен быть от 1 до 100'),
     validate
 ];
 

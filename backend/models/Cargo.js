@@ -74,7 +74,7 @@ class Cargo {
         });
     }
 
-    static async buyFromMarket(cargoId, buyerId) {
+    static async buyFromMarket(cargoId, buyerId, requestedAmount = null) {
         const supabase = getSupabase();
         
         // Получаем груз
@@ -90,6 +90,24 @@ class Cargo {
             throw new AppError('Груз уже продан', 400, 'CARGO_ALREADY_SOLD');
         }
         
+        // Определяем количество для покупки
+        const buyAmount = requestedAmount || cargo.amount; // Если не указано - покупаем всё
+        
+        // Проверка валидности количества
+        if (!buyAmount || buyAmount <= 0) {
+            throw new AppError('Количество груза должно быть больше 0', 400, 'INVALID_AMOUNT');
+        }
+        
+        // Максимальное количество груза на судне - 100 единиц
+        if (buyAmount > 100) {
+            throw new AppError('Максимальное количество груза - 100 единиц', 400, 'MAX_CARGO_EXCEEDED');
+        }
+        
+        // Проверка доступного количества
+        if (buyAmount > cargo.amount) {
+            throw new AppError(`Недостаточно груза на рынке. Доступно: ${cargo.amount}`, 400, 'INSUFFICIENT_CARGO');
+        }
+        
         // Получаем покупателя
         const { data: buyer, error: buyerError } = await supabase
             .from('users')
@@ -99,7 +117,11 @@ class Cargo {
         
         if (buyerError) throw buyerError;
         
-        if (buyer.coins < cargo.price) {
+        // Вычисляем цену за единицу (цена всего груза / количество)
+        const pricePerUnit = Math.floor(cargo.price / cargo.amount);
+        const totalPrice = pricePerUnit * buyAmount;
+        
+        if (buyer.coins < totalPrice) {
             throw new AppError('Недостаточно монет', 400, 'INSUFFICIENT_FUNDS');
         }
 
@@ -153,40 +175,59 @@ class Cargo {
             throw new AppError('Судно не найдено', 404, 'SHIP_NOT_FOUND');
         }
 
-        // Загружаем груз на судно
+        // Загружаем груз на судно (только выбранное количество)
         ship.cargo = {
             type: cargo.cargo_type,
-            amount: cargo.amount
+            amount: buyAmount
         };
         await ship.save();
 
         // Списываем монеты у покупателя
         await supabase.rpc('spend_user_coins', {
             user_uuid: buyerId,
-            amount: cargo.price
+            amount: totalPrice
         });
         
         // Начисляем монеты продавцу
         await supabase.rpc('add_user_coins', {
             user_uuid: cargo.seller_id,
-            amount: cargo.price
+            amount: totalPrice
         });
         
-        // Помечаем груз как проданный
-        const { data: updatedCargo, error: updateError } = await supabase
-            .from('market_cargo')
-            .update({
-                is_sold: true,
-                sold_to: buyerId,
-                sold_at: new Date().toISOString()
-            })
-            .eq('id', cargoId)
-            .select()
-            .single();
+        // Обновляем груз на рынке
+        const remainingAmount = cargo.amount - buyAmount;
         
-        if (updateError) throw updateError;
-        
-        return { success: true, cargo: new Cargo(updatedCargo), ship };
+        if (remainingAmount === 0) {
+            // Если куплено всё - помечаем как проданный
+            const { data: updatedCargo, error: updateError } = await supabase
+                .from('market_cargo')
+                .update({
+                    is_sold: true,
+                    sold_to: buyerId,
+                    sold_at: new Date().toISOString()
+                })
+                .eq('id', cargoId)
+                .select()
+                .single();
+            
+            if (updateError) throw updateError;
+            return { success: true, cargo: new Cargo(updatedCargo), ship };
+        } else {
+            // Если куплена часть - уменьшаем количество и обновляем цену
+            const remainingPrice = pricePerUnit * remainingAmount;
+            const { data: updatedCargo, error: updateError } = await supabase
+                .from('market_cargo')
+                .update({
+                    amount: remainingAmount,
+                    price: remainingPrice
+                })
+                .eq('id', cargoId)
+                .select()
+                .single();
+            
+            if (updateError) throw updateError;
+            return { success: true, cargo: new Cargo(updatedCargo), ship, boughtAmount: buyAmount };
+        }
     }
 
     static async addToMarket(cargoData) {

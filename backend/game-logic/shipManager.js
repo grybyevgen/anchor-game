@@ -126,6 +126,16 @@ async function loadCargo(shipId, cargoType, amount) {
         return { success: false, error: 'Судно в пути' };
     }
 
+    // Проверка валидности количества
+    if (!amount || amount <= 0) {
+        return { success: false, error: 'Количество груза должно быть больше 0' };
+    }
+    
+    // Максимальное количество груза на судне - 100 единиц
+    if (amount > 100) {
+        return { success: false, error: 'Максимальное количество груза - 100 единиц' };
+    }
+    
     const port = await Port.findById(ship.currentPortId);
     const cargo = port.getCargo(cargoType);
     

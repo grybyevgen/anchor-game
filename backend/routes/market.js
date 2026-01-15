@@ -13,10 +13,10 @@ router.get('/', asyncHandler(async (req, res) => {
 // Купить груз с рынка
 router.post('/:cargoId/buy', validateBuyCargo, asyncHandler(async (req, res) => {
     const { cargoId } = req.params;
-    const { userId } = req.body;
+    const { userId, amount } = req.body;
     
     try {
-        const result = await Cargo.buyFromMarket(cargoId, userId);
+        const result = await Cargo.buyFromMarket(cargoId, userId, amount);
         res.json(result);
     } catch (error) {
         const handledError = handleSupabaseError(error);

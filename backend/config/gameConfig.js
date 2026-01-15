@@ -51,7 +51,7 @@ module.exports = {
     // Валидация
     validation: {
         minCargoAmount: 1,
-        maxCargoAmount: 1000,
+        maxCargoAmount: 100, // Максимальное количество груза на судне - 100 единиц
         minPrice: 0,
         maxPrice: 1000000,
         minCrewLevel: 1,
