@@ -3,91 +3,80 @@ const router = express.Router();
 const Ship = require('../models/Ship');
 const User = require('../models/User');
 const Port = require('../models/Port');
-const { sendShipToPort, loadCargo, unloadCargo, repairShip } = require('../game-logic/shipManager');
+const gameConfig = require('../config/gameConfig');
+const { sendShipToPort, loadCargo, unloadCargo, repairShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
+const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
+const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
 
 // Получить все судна пользователя
-router.get('/user/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        
-        let user;
-        if (userId.match(/^[0-9]+$/)) {
-            user = await User.findOne({ telegramId: parseInt(userId) });
-        } else {
-            user = await User.findById(userId);
-        }
-        
-        if (!user) {
-            return res.status(404).json({ error: 'Пользователь не найден' });
-        }
-        
-        const ships = await Ship.find({ userId: user.id });
-        res.json(ships);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+router.get('/user/:userId', asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    
+    let user;
+    if (userId.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userId) });
+    } else {
+        user = await User.findById(userId);
     }
-});
+    
+    if (!user) {
+        return res.status(404).json({ 
+            success: false,
+            error: 'Пользователь не найден' 
+        });
+    }
+    
+    // Проверяем завершенные путешествия перед загрузкой
+    await checkAndCompleteTravels();
+    
+    const ships = await Ship.find({ userId: user.id });
+    res.json({ success: true, ships });
+}));
 
 // Купить судно
-router.post('/buy', async (req, res) => {
+router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
+    const { userId, type } = req.body;
+    
+    const price = gameConfig.shipPrices[type];
+    if (!price) {
+        return res.status(400).json({ success: false, error: 'Неверный тип судна' });
+    }
+    
+    // Находим пользователя
+    let user;
+    if (userId.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userId) });
+    } else {
+        user = await User.findById(userId);
+    }
+    
+    if (!user) {
+        return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+    }
+    
+    // Проверяем баланс
+    if (user.coins < price) {
+        return res.status(400).json({ success: false, error: 'Недостаточно монет' });
+    }
+    
+    // Получаем стартовый порт
+    const ports = await Port.findAll();
+    if (ports.length === 0) {
+        return res.status(500).json({ success: false, error: 'Порты не инициализированы' });
+    }
+    
     try {
-        const { userId, type } = req.body;
-        
-        if (!userId || !type) {
-            return res.json({ success: false, error: 'Не указаны userId и type' });
-        }
-        
-        const shipPrices = {
-            'tanker': 1000,
-            'cargo': 1500,
-            'supply': 1200
-        };
-        
-        const price = shipPrices[type];
-        if (!price) {
-            return res.json({ success: false, error: 'Неверный тип судна' });
-        }
-        
-        // Находим пользователя
-        let user;
-        if (userId.match(/^[0-9]+$/)) {
-            user = await User.findOne({ telegramId: parseInt(userId) });
-        } else {
-            user = await User.findById(userId);
-        }
-        
-        if (!user) {
-            return res.json({ success: false, error: 'Пользователь не найден' });
-        }
-        
-        // Проверяем баланс
-        if (user.coins < price) {
-            return res.json({ success: false, error: 'Недостаточно монет' });
-        }
-        
-        // Получаем стартовый порт
-        const ports = await Port.findAll();
-        if (ports.length === 0) {
-            return res.json({ success: false, error: 'Порты не инициализированы' });
-        }
-        
         // Создаем судно
-        const shipNames = {
-            'tanker': 'Танкер',
-            'cargo': 'Грузовое судно',
-            'supply': 'Снабженец'
-        };
-        
         const newShip = await Ship.create({
             userId: user.id,
             type,
-            name: `${shipNames[type]} #${Date.now()}`,
+            name: `${gameConfig.shipNames[type]} #${Date.now()}`,
             currentPortId: ports[0].id,
-            fuel: 100,
-            maxFuel: 100,
-            health: 100,
-            maxHealth: 100,
-            crewLevel: 1
+            fuel: gameConfig.initial.shipFuel,
+            maxFuel: gameConfig.initial.shipMaxFuel,
+            health: gameConfig.initial.shipHealth,
+            maxHealth: gameConfig.initial.shipMaxHealth,
+            crewLevel: gameConfig.initial.shipCrewLevel
         });
         
         // Списываем монеты
@@ -95,59 +84,68 @@ router.post('/buy', async (req, res) => {
         
         res.json({ success: true, ship: newShip });
     } catch (error) {
-        console.error('Ошибка покупки судна:', error);
-        res.status(500).json({ success: false, error: error.message });
+        const handledError = handleSupabaseError(error);
+        throw handledError || error;
     }
-});
+}));
 
 // Отправить судно в порт
-router.post('/:shipId/travel', async (req, res) => {
-    try {
-        const { shipId } = req.params;
-        const { portId } = req.body;
-        
-        const result = await sendShipToPort(shipId, portId);
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+router.post('/:shipId/travel', validateTravel, asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const { portId } = req.body;
+    
+    // Проверяем завершенные путешествия перед отправкой
+    await checkAndCompleteTravels();
+    
+    const result = await sendShipToPort(shipId, portId);
+    res.json(result);
+}));
 
 // Загрузить груз
-router.post('/:shipId/load', async (req, res) => {
-    try {
-        const { shipId } = req.params;
-        const { cargoType, amount } = req.body;
-        
-        const result = await loadCargo(shipId, cargoType, amount);
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+router.post('/:shipId/load', validateLoadCargo, asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const { cargoType, amount } = req.body;
+    
+    // Проверяем завершенные путешествия перед загрузкой
+    await checkShipTravel(shipId);
+    
+    const result = await loadCargo(shipId, cargoType, amount);
+    res.json(result);
+}));
 
 // Выгрузить груз
-router.post('/:shipId/unload', async (req, res) => {
-    try {
-        const { shipId } = req.params;
-        
-        const result = await unloadCargo(shipId);
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+router.post('/:shipId/unload', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    
+    // Проверяем завершенные путешествия перед выгрузкой
+    await checkShipTravel(shipId);
+    
+    const result = await unloadCargo(shipId);
+    res.json(result);
+}));
 
 // Починить судно
-router.post('/:shipId/repair', async (req, res) => {
-    try {
-        const { shipId } = req.params;
-        
-        const result = await repairShip(shipId);
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+router.post('/:shipId/repair', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    
+    // Проверяем завершенные путешествия перед ремонтом
+    await checkShipTravel(shipId);
+    
+    const result = await repairShip(shipId);
+    res.json(result);
+}));
+
+// Проверить завершенные путешествия (для всех судов)
+router.post('/check-travels', asyncHandler(async (req, res) => {
+    const result = await checkAndCompleteTravels();
+    res.json({ success: true, ...result });
+}));
+
+// Проверить конкретное судно
+router.get('/:shipId/check-travel', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const result = await checkShipTravel(shipId);
+    res.json(result);
+}));
 
 module.exports = router;

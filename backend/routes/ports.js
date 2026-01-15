@@ -1,26 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const Port = require('../models/Port');
+const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
+const { validateUUID } = require('../middleware/validation');
 
 // Получить все порты
-router.get('/', async (req, res) => {
-    try {
-        const ports = await Port.findAll();
-        res.json(ports);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+router.get('/', asyncHandler(async (req, res) => {
+    const ports = await Port.findAll();
+    res.json({ success: true, ports });
+}));
 
 // Получить порт по ID
-router.get('/:portId', async (req, res) => {
-    try {
-        const { portId } = req.params;
-        const port = await Port.findById(portId);
-        res.json(port);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+router.get('/:portId', validateUUID('portId'), asyncHandler(async (req, res) => {
+    const { portId } = req.params;
+    const port = await Port.findById(portId);
+    
+    if (!port) {
+        return res.status(404).json({ 
+            success: false,
+            error: 'Порт не найден' 
+        });
     }
-});
+    
+    res.json({ success: true, port });
+}));
 
 module.exports = router;

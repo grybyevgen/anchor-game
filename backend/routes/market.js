@@ -1,32 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const Cargo = require('../models/Cargo');
+const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
+const { validateBuyCargo } = require('../middleware/validation');
 
 // Получить все грузы на рынке
-router.get('/', async (req, res) => {
-    try {
-        const cargo = await Cargo.findMarketCargo();
-        res.json(cargo);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+router.get('/', asyncHandler(async (req, res) => {
+    const cargo = await Cargo.findMarketCargo();
+    res.json({ success: true, cargo });
+}));
 
 // Купить груз с рынка
-router.post('/:cargoId/buy', async (req, res) => {
+router.post('/:cargoId/buy', validateBuyCargo, asyncHandler(async (req, res) => {
+    const { cargoId } = req.params;
+    const { userId } = req.body;
+    
     try {
-        const { cargoId } = req.params;
-        const { userId } = req.body;
-        
-        if (!userId) {
-            return res.json({ success: false, error: 'userId обязателен' });
-        }
-        
         const result = await Cargo.buyFromMarket(cargoId, userId);
         res.json(result);
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const handledError = handleSupabaseError(error);
+        throw handledError || error;
     }
-});
+}));
 
 module.exports = router;

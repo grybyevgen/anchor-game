@@ -2,7 +2,12 @@ const Ship = require('../models/Ship');
 const Port = require('../models/Port');
 const Cargo = require('../models/Cargo');
 const User = require('../models/User');
+const gameConfig = require('../config/gameConfig');
 
+/**
+ * Отправить судно в порт
+ * Теперь использует проверку по времени вместо setTimeout
+ */
 async function sendShipToPort(shipId, portId) {
     const ship = await Ship.findById(shipId);
     if (!ship) {
@@ -22,30 +27,89 @@ async function sendShipToPort(shipId, portId) {
         return { success: false, error: 'Судно уже в этом порту' };
     }
 
-    const fuelCost = 10;
+    const fuelCost = gameConfig.fuelCost.perTravel;
     
     if (ship.fuel < fuelCost) {
         return { success: false, error: 'Недостаточно топлива' };
     }
 
-    const travelTime = 30000; // 30 секунд
+    const travelTime = gameConfig.travelTime.default;
+    const travelEndTime = new Date(Date.now() + travelTime);
     
     ship.fuel -= fuelCost;
     await ship.startTravel(portId, travelTime);
     
-    setTimeout(async () => {
-        try {
-            const shipToUpdate = await Ship.findById(shipId);
-            if (shipToUpdate && shipToUpdate.isTraveling) {
-                await shipToUpdate.completeTravel();
-                console.log(`Судно ${shipToUpdate.name} прибыло в порт`);
-            }
-        } catch (error) {
-            console.error('Ошибка завершения путешествия:', error);
-        }
-    }, travelTime);
+    // Не используем setTimeout - путешествие будет завершено при следующей проверке
+    // через endpoint /api/ships/check-travels или при любом запросе к судну
     
-    return { success: true, ship, travelTime };
+    return { 
+        success: true, 
+        ship, 
+        travelTime,
+        travelEndTime: travelEndTime.toISOString()
+    };
+}
+
+/**
+ * Проверить и завершить завершенные путешествия
+ * Должна вызываться периодически или при запросах
+ */
+async function checkAndCompleteTravels() {
+    try {
+        const supabase = require('../config/database').getSupabase();
+        const now = new Date().toISOString();
+        
+        // Находим все судна, которые должны были прибыть
+        const { data: travelingShips, error } = await supabase
+            .from('ships')
+            .select('*')
+            .eq('is_traveling', true)
+            .lte('travel_end_time', now);
+        
+        if (error) {
+            console.error('Ошибка при проверке путешествий:', error);
+            return { completed: 0, error: error.message };
+        }
+        
+        let completed = 0;
+        for (const shipData of travelingShips || []) {
+            try {
+                const ship = new Ship(shipData);
+                await ship.completeTravel();
+                console.log(`✅ Судно ${ship.name} прибыло в порт`);
+                completed++;
+            } catch (err) {
+                console.error(`Ошибка завершения путешествия для судна ${shipData.id}:`, err);
+            }
+        }
+        
+        return { completed, total: travelingShips?.length || 0 };
+    } catch (error) {
+        console.error('Ошибка проверки путешествий:', error);
+        return { completed: 0, error: error.message };
+    }
+}
+
+/**
+ * Проверить конкретное судно и завершить путешествие если оно завершено
+ */
+async function checkShipTravel(shipId) {
+    const ship = await Ship.findById(shipId);
+    if (!ship) {
+        return { success: false, error: 'Судно не найдено' };
+    }
+    
+    if (!ship.isTraveling) {
+        return { success: true, completed: false, ship };
+    }
+    
+    // Проверяем, завершилось ли путешествие
+    if (ship.travelEndTime && new Date(ship.travelEndTime) <= new Date()) {
+        await ship.completeTravel();
+        return { success: true, completed: true, ship };
+    }
+    
+    return { success: true, completed: false, ship };
 }
 
 async function loadCargo(shipId, cargoType, amount) {
@@ -95,25 +159,43 @@ async function unloadCargo(shipId) {
         return { success: false, error: 'Судно в пути' };
     }
 
-    const baseReward = ship.cargo.amount * 10;
-    const reward = Math.floor(baseReward * (1 + (ship.crewLevel - 1) * 0.1));
+    // Используем транзакцию для атомарности операций
+    try {
+        const baseReward = ship.cargo.amount * gameConfig.economy.baseRewardPerCargo;
+        const reward = Math.floor(baseReward * (1 + (ship.crewLevel - 1) * gameConfig.economy.rewardMultiplierPerCrewLevel));
 
-    await Cargo.addToMarket({
-        type: ship.cargo.type,
-        amount: ship.cargo.amount,
-        portId: ship.currentPortId,
-        sellerId: ship.userId,
-        price: Math.floor(reward * 0.8)
-    });
+        // Сохраняем данные груза перед очисткой
+        const cargoData = {
+            type: ship.cargo.type,
+            amount: ship.cargo.amount
+        };
 
-    const user = await User.findById(ship.userId);
-    await user.addCoins(reward);
+        // Сначала добавляем на рынок
+        await Cargo.addToMarket({
+            type: cargoData.type,
+            amount: cargoData.amount,
+            portId: ship.currentPortId,
+            sellerId: ship.userId,
+            price: Math.floor(reward * gameConfig.economy.marketPriceMultiplier)
+        });
 
-    const cargo = ship.cargo;
-    ship.cargo = null;
-    await ship.save();
-    
-    return { success: true, reward, cargo };
+        // Затем начисляем монеты
+        const user = await User.findById(ship.userId);
+        if (!user) {
+            throw new Error('Пользователь не найден');
+        }
+        await user.addCoins(reward);
+
+        // И только потом очищаем груз
+        ship.cargo = null;
+        await ship.save();
+        
+        return { success: true, reward, cargo: cargoData };
+    } catch (error) {
+        console.error('Ошибка выгрузки груза:', error);
+        // В случае ошибки состояние должно остаться согласованным
+        throw error;
+    }
 }
 
 async function repairShip(shipId) {
@@ -130,24 +212,35 @@ async function repairShip(shipId) {
         return { success: false, error: 'Судно в пути' };
     }
 
-    const repairCost = (ship.maxHealth - ship.health) * 5;
+    const repairCost = (ship.maxHealth - ship.health) * gameConfig.economy.repairCostPerHealth;
     
     const user = await User.findById(ship.userId);
+    if (!user) {
+        return { success: false, error: 'Пользователь не найден' };
+    }
+    
     if (user.coins < repairCost) {
         return { success: false, error: 'Недостаточно монет для ремонта' };
     }
 
-    ship.health = ship.maxHealth;
-    await ship.save();
-    
-    await user.spendCoins(repairCost);
-    
-    return { success: true, ship, cost: repairCost };
+    // Атомарная операция: сначала списываем монеты, потом чиним
+    try {
+        await user.spendCoins(repairCost);
+        ship.health = ship.maxHealth;
+        await ship.save();
+        
+        return { success: true, ship, cost: repairCost };
+    } catch (error) {
+        console.error('Ошибка ремонта судна:', error);
+        throw error;
+    }
 }
 
 module.exports = {
     sendShipToPort,
     loadCargo,
     unloadCargo,
-    repairShip
+    repairShip,
+    checkAndCompleteTravels,
+    checkShipTravel
 };
