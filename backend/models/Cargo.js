@@ -17,28 +17,59 @@ class Cargo {
     static async findMarketCargo() {
         const supabase = getSupabase();
         
-        const { data, error } = await supabase
+        // Сначала получаем все грузы
+        const { data: cargoList, error: cargoError } = await supabase
             .from('market_cargo')
-            .select(`
-                *,
-                port_id:ports(id, name),
-                seller_id:users(id, username)
-            `)
+            .select('*')
             .eq('is_sold', false)
             .order('created_at', { ascending: false });
         
-        if (error) throw error;
+        if (cargoError) throw cargoError;
         
-        return data.map(cargo => ({
-            id: cargo.id,
-            type: cargo.cargo_type,
-            amount: cargo.amount,
-            price: cargo.price,
-            portId: cargo.port_id.id,
-            portName: cargo.port_id.name,
-            sellerId: cargo.seller_id.id,
-            sellerName: cargo.seller_id.username
-        }));
+        if (!cargoList || cargoList.length === 0) {
+            return [];
+        }
+        
+        // Получаем уникальные ID портов и продавцов
+        const portIds = [...new Set(cargoList.map(c => c.port_id))];
+        const sellerIds = [...new Set(cargoList.map(c => c.seller_id))];
+        
+        // Загружаем порты
+        const { data: ports, error: portsError } = await supabase
+            .from('ports')
+            .select('id, name')
+            .in('id', portIds);
+        
+        if (portsError) throw portsError;
+        
+        // Загружаем продавцов
+        const { data: sellers, error: sellersError } = await supabase
+            .from('users')
+            .select('id, username')
+            .in('id', sellerIds);
+        
+        if (sellersError) throw sellersError;
+        
+        // Создаем мапы для быстрого поиска
+        const portsMap = new Map(ports ? ports.map(p => [p.id, p]) : []);
+        const sellersMap = new Map(sellers ? sellers.map(s => [s.id, s]) : []);
+        
+        // Объединяем данные
+        return cargoList.map(cargo => {
+            const port = portsMap.get(cargo.port_id);
+            const seller = sellersMap.get(cargo.seller_id);
+            
+            return {
+                id: cargo.id,
+                type: cargo.cargo_type,
+                amount: cargo.amount,
+                price: cargo.price,
+                portId: cargo.port_id,
+                portName: port?.name || 'Неизвестно',
+                sellerId: cargo.seller_id,
+                sellerName: seller?.username || 'Неизвестно'
+            };
+        });
     }
 
     static async buyFromMarket(cargoId, buyerId) {
