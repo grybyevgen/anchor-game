@@ -22,7 +22,7 @@ app.set('trust proxy', 1);
 // Rate limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
-    max: 100, // максимум 100 запросов с одного IP
+    max: 300, // максимум 300 запросов с одного IP (увеличено для комфортной работы)
     message: {
         success: false,
         error: 'Слишком много запросов, попробуйте позже'
