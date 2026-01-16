@@ -82,6 +82,33 @@ class Port {
     }
 
     /**
+     * Рассчитывает расстояние между двумя портами по формуле Haversine
+     * @param {Port} port1 - Первый порт
+     * @param {Port} port2 - Второй порт
+     * @returns {number} - Расстояние в морских милях
+     */
+    static calculateDistance(port1, port2) {
+        if (!port1.location || !port2.location) {
+            // Если координаты не указаны, возвращаем среднее расстояние (например, 1000 миль)
+            return 1000;
+        }
+
+        const R = 3440; // Радиус Земли в морских милях
+        const lat1 = port1.location.lat * Math.PI / 180;
+        const lat2 = port2.location.lat * Math.PI / 180;
+        const deltaLat = (port2.location.lat - port1.location.lat) * Math.PI / 180;
+        const deltaLng = (port2.location.lng - port1.location.lng) * Math.PI / 180;
+
+        const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+                  Math.cos(lat1) * Math.cos(lat2) *
+                  Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        const distance = R * c;
+        return Math.round(distance * 10) / 10; // Округляем до 0.1 мили
+    }
+
+    /**
      * Рассчитывает динамическую цену груза на основе текущего количества
      * @param {number} currentAmount - Текущее количество груза в порту
      * @returns {number} - Цена за единицу груза

@@ -18,22 +18,50 @@ async function sendShipToPort(shipId, portId) {
         return { success: false, error: 'Судно уже в пути' };
     }
 
-    const port = await Port.findById(portId);
-    if (!port) {
-        return { success: false, error: 'Порт не найден' };
+    const destinationPort = await Port.findById(portId);
+    if (!destinationPort) {
+        return { success: false, error: 'Порт назначения не найден' };
+    }
+
+    const currentPort = await Port.findById(ship.currentPortId);
+    if (!currentPort) {
+        return { success: false, error: 'Текущий порт не найден' };
     }
 
     if (ship.currentPortId === portId) {
         return { success: false, error: 'Судно уже в этом порту' };
     }
 
-    const fuelCost = gameConfig.fuelCost.perTravel;
+    // Рассчитываем расстояние между портами
+    const distance = Port.calculateDistance(currentPort, destinationPort);
+    
+    // Рассчитываем расход топлива на основе расстояния
+    const fuelConsumptionRate = gameConfig.fuelCost.consumptionPerMile[ship.type] || 0.12;
+    let fuelCost = Math.max(
+        distance * fuelConsumptionRate,
+        gameConfig.fuelCost.minFuelPerTravel
+    );
+    
+    // Если судно перевозит груз, расход немного увеличивается
+    if (ship.cargo) {
+        fuelCost = fuelCost * 1.1; // +10% к расходу с грузом
+    }
+    
+    fuelCost = Math.round(fuelCost);
     
     if (ship.fuel < fuelCost) {
-        return { success: false, error: 'Недостаточно топлива' };
+        return { success: false, error: `Недостаточно топлива. Требуется: ${fuelCost}, доступно: ${ship.fuel}` };
     }
 
-    const travelTime = gameConfig.travelTime.default;
+    // Рассчитываем время путешествия на основе расстояния и скорости судна
+    const shipSpeed = gameConfig.shipSpeed[ship.type] || 18; // Морские мили в час
+    const travelTimeHours = distance / shipSpeed;
+    // Конвертируем в миллисекунды (для тестирования используем ускоренный режим: 1 час = 1 минута реального времени)
+    // В продакшене можно использовать реальное время: travelTimeHours * 60 * 60 * 1000
+    const travelTime = Math.max(
+        travelTimeHours * 60 * 1000, // 1 час = 1 минута реального времени
+        gameConfig.travelTime.default // Минимум 30 секунд
+    );
     const travelEndTime = new Date(Date.now() + travelTime);
     
     ship.fuel -= fuelCost;
@@ -46,7 +74,9 @@ async function sendShipToPort(shipId, portId) {
         success: true, 
         ship, 
         travelTime,
-        travelEndTime: travelEndTime.toISOString()
+        travelEndTime: travelEndTime.toISOString(),
+        distance,
+        fuelCost
     };
 }
 
@@ -75,6 +105,23 @@ async function checkAndCompleteTravels() {
         for (const shipData of travelingShips || []) {
             try {
                 const ship = new Ship(shipData);
+                
+                // Взимаем портовые сборы при прибытии (базовый сбор)
+                const user = await User.findById(ship.userId);
+                if (user) {
+                    const portFees = gameConfig.economy.portFees.base;
+                    if (user.coins >= portFees) {
+                        try {
+                            await user.spendCoins(portFees);
+                            console.log(`💰 Портовые сборы: ${portFees} монет за вход в порт (судно ${ship.name})`);
+                        } catch (feeError) {
+                            // Если не хватает денег - все равно завершаем путешествие
+                            // В реальности можно заблокировать судно, но для игрового процесса лучше просто предупредить
+                            console.warn(`⚠️ Недостаточно денег для портовых сборов (${portFees}) для судна ${ship.name}`);
+                        }
+                    }
+                }
+                
                 await ship.completeTravel();
                 console.log(`✅ Судно ${ship.name} прибыло в порт`);
                 completed++;
@@ -207,8 +254,43 @@ async function unloadCargo(shipId, destination = 'market') {
 
     // Используем транзакцию для атомарности операций
     try {
-        const baseReward = ship.cargo.amount * gameConfig.economy.baseRewardPerCargo;
-        const reward = Math.floor(baseReward * (1 + (ship.crewLevel - 1) * gameConfig.economy.rewardMultiplierPerCrewLevel));
+        const currentPort = await Port.findById(ship.currentPortId);
+        const purchasePort = await Port.findById(ship.cargo.purchasePortId);
+        
+        // Рассчитываем расстояние между портами
+        const distance = Port.calculateDistance(purchasePort, currentPort);
+        
+        // Базовая стоимость груза по типу
+        const cargoBaseValue = gameConfig.economy.cargoBaseValue[ship.cargo.type] || 25;
+        
+        // Рассчитываем базовую цену продажи с учетом расстояния
+        // Формула: базовая_стоимость + (расстояние * множитель_расстояния)
+        const basePricePerUnit = cargoBaseValue + (distance * gameConfig.economy.distancePriceMultiplier);
+        
+        // Рассчитываем множитель спроса/предложения в порту назначения
+        const portCargo = currentPort.getCargo(ship.cargo.type);
+        let demandMultiplier = 1.0;
+        
+        if (portCargo) {
+            const pricing = gameConfig.economy.portCargoPricing;
+            const normalizedAmount = Math.min(portCargo.amount / pricing.referenceAmount, 1);
+            // Чем меньше груза в порту, тем выше спрос (и цена)
+            demandMultiplier = gameConfig.economy.demandMultiplier.min + 
+                             (gameConfig.economy.demandMultiplier.max - gameConfig.economy.demandMultiplier.min) * (1 - normalizedAmount);
+        } else {
+            // Если груза нет в порту - максимальный спрос
+            demandMultiplier = gameConfig.economy.demandMultiplier.max;
+        }
+        
+        // Рассчитываем итоговую цену за единицу с учетом спроса
+        const pricePerUnit = basePricePerUnit * demandMultiplier;
+        
+        // Рассчитываем общую награду
+        let baseReward = pricePerUnit * ship.cargo.amount;
+        
+        // Применяем бонус от уровня экипажа
+        const crewBonus = 1 + (ship.crewLevel - 1) * gameConfig.economy.rewardMultiplierPerCrewLevel;
+        const reward = Math.floor(baseReward * crewBonus);
 
         // Сохраняем данные груза перед очисткой
         const cargoData = {
@@ -216,40 +298,77 @@ async function unloadCargo(shipId, destination = 'market') {
             amount: ship.cargo.amount
         };
 
+        // Рассчитываем портовые сборы за выгрузку
+        const portFees = gameConfig.economy.portFees.base + 
+                        (gameConfig.economy.portFees.perCargoUnit * cargoData.amount);
+
+        const user = await User.findById(ship.userId);
+        if (!user) {
+            throw new Error('Пользователь не найден');
+        }
+
         if (destination === 'port') {
             // Продажа в порт - пополняем запасы порта
-            const port = await Port.findById(ship.currentPortId);
-            await port.addCargo(cargoData.type, cargoData.amount);
+            await currentPort.addCargo(cargoData.type, cargoData.amount);
             
-            // Начисляем монеты
-            const user = await User.findById(ship.userId);
-            if (!user) {
-                throw new Error('Пользователь не найден');
+            // Списываем портовые сборы
+            if (user.coins < portFees) {
+                throw new Error(`Недостаточно монет для уплаты портовых сборов (${portFees})`);
             }
-            await user.addCoins(reward);
+            await user.spendCoins(portFees);
+            
+            // Начисляем монеты за продажу (с учетом сборов)
+            const netReward = reward - portFees;
+            await user.addCoins(netReward);
+            
+            // Очищаем груз
+            ship.cargo = null;
+            await ship.save();
+            
+            return { 
+                success: true, 
+                reward: netReward, 
+                grossReward: reward,
+                portFees,
+                cargo: cargoData, 
+                destination,
+                distance
+            };
         } else {
             // Продажа на рынок (как раньше)
+            const marketPrice = Math.floor(reward * gameConfig.economy.marketPriceMultiplier);
             await Cargo.addToMarket({
                 type: cargoData.type,
                 amount: cargoData.amount,
                 portId: ship.currentPortId,
                 sellerId: ship.userId,
-                price: Math.floor(reward * gameConfig.economy.marketPriceMultiplier)
+                price: marketPrice
             });
 
-            // Затем начисляем монеты
-            const user = await User.findById(ship.userId);
-            if (!user) {
-                throw new Error('Пользователь не найден');
+            // Списываем портовые сборы
+            if (user.coins < portFees) {
+                throw new Error(`Недостаточно монет для уплаты портовых сборов (${portFees})`);
             }
-            await user.addCoins(reward);
-        }
+            await user.spendCoins(portFees);
+            
+            // Начисляем монеты за продажу (с учетом сборов)
+            const netReward = reward - portFees;
+            await user.addCoins(netReward);
 
-        // И только потом очищаем груз
-        ship.cargo = null;
-        await ship.save();
-        
-        return { success: true, reward, cargo: cargoData, destination };
+            // И только потом очищаем груз
+            ship.cargo = null;
+            await ship.save();
+            
+            return { 
+                success: true, 
+                reward: netReward, 
+                grossReward: reward,
+                portFees,
+                cargo: cargoData, 
+                destination,
+                distance
+            };
+        }
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
         // В случае ошибки состояние должно остаться согласованным
