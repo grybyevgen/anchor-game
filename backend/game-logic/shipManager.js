@@ -53,15 +53,17 @@ async function sendShipToPort(shipId, portId) {
         return { success: false, error: `Недостаточно топлива. Требуется: ${fuelCost}, доступно: ${ship.fuel}` };
     }
 
-    // Рассчитываем время путешествия на основе расстояния и скорости судна
-    const shipSpeed = gameConfig.shipSpeed[ship.type] || 18; // Морские мили в час
-    const travelTimeHours = distance / shipSpeed;
-    // Конвертируем в миллисекунды (для тестирования используем ускоренный режим: 1 час = 1 минута реального времени)
-    // В продакшене можно использовать реальное время: travelTimeHours * 60 * 60 * 1000
-    const travelTime = Math.max(
-        travelTimeHours * 60 * 1000, // 1 час = 1 минута реального времени
-        gameConfig.travelTime.default // Минимум 30 секунд
-    );
+    // ВРЕМЕННО ДЛЯ ТЕСТОВ: фиксированное время рейса 30 секунд
+    // TODO: ВЕРНУТЬ РЕАЛИСТИЧНОЕ ВРЕМЯ В БУДУЩЕМ
+    const travelTime = 30000; // 30 секунд для всех рейсов
+    
+    // РЕАЛИСТИЧНЫЙ РАСЧЕТ (закомментирован для тестов):
+    // const shipSpeed = gameConfig.shipSpeed[ship.type] || 18; // Морские мили в час
+    // const travelTimeHours = distance / shipSpeed;
+    // const travelTime = Math.max(
+    //     travelTimeHours * 60 * 1000, // 1 час = 1 минута реального времени
+    //     gameConfig.travelTime.default // Минимум 30 секунд
+    // );
     const travelEndTime = new Date(Date.now() + travelTime);
     
     ship.fuel -= fuelCost;
@@ -299,8 +301,18 @@ async function unloadCargo(shipId, destination = 'market') {
         };
 
         // Рассчитываем портовые сборы за выгрузку
-        const portFees = gameConfig.economy.portFees.base + 
-                        (gameConfig.economy.portFees.perCargoUnit * cargoData.amount);
+        const basePortFees = gameConfig.economy.portFees.base + 
+                            (gameConfig.economy.portFees.perCargoUnit * cargoData.amount);
+        
+        // Добавляем процент от стоимости груза
+        const cargoValueFee = Math.floor(reward * (gameConfig.economy.portFees.percentageOfCargoValue || 0));
+        const portFees = basePortFees + cargoValueFee;
+        
+        // Рассчитываем налог на прибыль
+        // Прибыль = доход - стоимость_покупки_груза (но у нас нет информации о стоимости покупки)
+        // Поэтому считаем налог от валовой прибыли с учетом сборов
+        const profitBeforeTax = reward - portFees;
+        const profitTax = Math.floor(profitBeforeTax * (gameConfig.economy.profitTax || 0));
 
         const user = await User.findById(ship.userId);
         if (!user) {
@@ -317,8 +329,16 @@ async function unloadCargo(shipId, destination = 'market') {
             }
             await user.spendCoins(portFees);
             
-            // Начисляем монеты за продажу (с учетом сборов)
-            const netReward = reward - portFees;
+            // Списываем налог на прибыль
+            if (profitTax > 0) {
+                if (user.coins < profitTax) {
+                    throw new Error(`Недостаточно монет для уплаты налога на прибыль (${profitTax})`);
+                }
+                await user.spendCoins(profitTax);
+            }
+            
+            // Начисляем монеты за продажу (с учетом сборов и налогов)
+            const netReward = reward - portFees - profitTax;
             await user.addCoins(netReward);
             
             // Очищаем груз
@@ -330,6 +350,7 @@ async function unloadCargo(shipId, destination = 'market') {
                 reward: netReward, 
                 grossReward: reward,
                 portFees,
+                profitTax,
                 cargo: cargoData, 
                 destination,
                 distance
@@ -351,8 +372,16 @@ async function unloadCargo(shipId, destination = 'market') {
             }
             await user.spendCoins(portFees);
             
-            // Начисляем монеты за продажу (с учетом сборов)
-            const netReward = reward - portFees;
+            // Списываем налог на прибыль
+            if (profitTax > 0) {
+                if (user.coins < profitTax) {
+                    throw new Error(`Недостаточно монет для уплаты налога на прибыль (${profitTax})`);
+                }
+                await user.spendCoins(profitTax);
+            }
+            
+            // Начисляем монеты за продажу (с учетом сборов и налогов)
+            const netReward = reward - portFees - profitTax;
             await user.addCoins(netReward);
 
             // И только потом очищаем груз
@@ -364,6 +393,7 @@ async function unloadCargo(shipId, destination = 'market') {
                 reward: netReward, 
                 grossReward: reward,
                 portFees,
+                profitTax,
                 cargo: cargoData, 
                 destination,
                 distance
