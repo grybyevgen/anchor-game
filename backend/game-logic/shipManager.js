@@ -161,25 +161,29 @@ async function loadCargo(shipId, cargoType, amount) {
         return { success: false, error: 'Недостаточно денег' };
     }
     
-    // Списываем деньги
-    try {
-        await user.spendCoins(cargoPrice);
-        
-        // Загружаем груз на судно
-        ship.cargo = { type: cargoType, amount };
-        await ship.save();
-        
-        // Удаляем груз из порта
-        await port.removeCargo(cargoType, amount);
-        
-        return { success: true, ship };
-    } catch (error) {
-        console.error('Ошибка при загрузке груза:', error);
-        throw error;
-    }
+        // Списываем деньги
+        try {
+            await user.spendCoins(cargoPrice);
+            
+            // Загружаем груз на судно и сохраняем порт покупки
+            ship.cargo = { 
+                type: cargoType, 
+                amount,
+                purchasePortId: ship.currentPortId  // Сохраняем порт, где купили груз
+            };
+            await ship.save();
+            
+            // Удаляем груз из порта
+            await port.removeCargo(cargoType, amount);
+            
+            return { success: true, ship };
+        } catch (error) {
+            console.error('Ошибка при загрузке груза:', error);
+            throw error;
+        }
 }
 
-async function unloadCargo(shipId) {
+async function unloadCargo(shipId, destination = 'market') {
     const ship = await Ship.findById(shipId);
     if (!ship) {
         return { success: false, error: 'Судно не найдено' };
@@ -193,6 +197,14 @@ async function unloadCargo(shipId) {
         return { success: false, error: 'Судно в пути' };
     }
 
+    // Проверка: нельзя продать груз в порту, где он был куплен (ни на рынок, ни в порт)
+    if (ship.cargo.purchasePortId === ship.currentPortId) {
+        return { 
+            success: false, 
+            error: 'Нельзя продать груз в порту, где он был куплен. Перевезите груз в другой порт, чтобы продать его там.' 
+        };
+    }
+
     // Используем транзакцию для атомарности операций
     try {
         const baseReward = ship.cargo.amount * gameConfig.economy.baseRewardPerCargo;
@@ -204,27 +216,40 @@ async function unloadCargo(shipId) {
             amount: ship.cargo.amount
         };
 
-        // Сначала добавляем на рынок
-        await Cargo.addToMarket({
-            type: cargoData.type,
-            amount: cargoData.amount,
-            portId: ship.currentPortId,
-            sellerId: ship.userId,
-            price: Math.floor(reward * gameConfig.economy.marketPriceMultiplier)
-        });
+        if (destination === 'port') {
+            // Продажа в порт - пополняем запасы порта
+            const port = await Port.findById(ship.currentPortId);
+            await port.addCargo(cargoData.type, cargoData.amount);
+            
+            // Начисляем монеты
+            const user = await User.findById(ship.userId);
+            if (!user) {
+                throw new Error('Пользователь не найден');
+            }
+            await user.addCoins(reward);
+        } else {
+            // Продажа на рынок (как раньше)
+            await Cargo.addToMarket({
+                type: cargoData.type,
+                amount: cargoData.amount,
+                portId: ship.currentPortId,
+                sellerId: ship.userId,
+                price: Math.floor(reward * gameConfig.economy.marketPriceMultiplier)
+            });
 
-        // Затем начисляем монеты
-        const user = await User.findById(ship.userId);
-        if (!user) {
-            throw new Error('Пользователь не найден');
+            // Затем начисляем монеты
+            const user = await User.findById(ship.userId);
+            if (!user) {
+                throw new Error('Пользователь не найден');
+            }
+            await user.addCoins(reward);
         }
-        await user.addCoins(reward);
 
         // И только потом очищаем груз
         ship.cargo = null;
         await ship.save();
         
-        return { success: true, reward, cargo: cargoData };
+        return { success: true, reward, cargo: cargoData, destination };
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
         // В случае ошибки состояние должно остаться согласованным

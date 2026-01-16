@@ -116,11 +116,12 @@ router.post('/:shipId/load', validateLoadCargo, asyncHandler(async (req, res) =>
 // Выгрузить груз
 router.post('/:shipId/unload', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
+    const { destination } = req.body; // 'market' или 'port'
     
     // Проверяем завершенные путешествия перед выгрузкой
     await checkShipTravel(shipId);
     
-    const result = await unloadCargo(shipId);
+    const result = await unloadCargo(shipId, destination || 'market');
     res.json(result);
 }));
 

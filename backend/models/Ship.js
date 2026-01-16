@@ -14,7 +14,8 @@ class Ship {
         this.crewLevel = data.crew_level;
         this.cargo = data.cargo_type ? {
             type: data.cargo_type,
-            amount: data.cargo_amount
+            amount: data.cargo_amount,
+            purchasePortId: data.cargo_purchase_port_id
         } : null;
         this.isTraveling = data.is_traveling;
         this.travelStartTime = data.travel_start_time;
@@ -86,6 +87,7 @@ class Ship {
             crew_level: this.crewLevel,
             cargo_type: this.cargo ? this.cargo.type : null,
             cargo_amount: this.cargo ? this.cargo.amount : null,
+            cargo_purchase_port_id: this.cargo?.purchasePortId || null,
             is_traveling: this.isTraveling,
             travel_start_time: this.travelStartTime,
             travel_end_time: this.travelEndTime,
