@@ -101,7 +101,7 @@ module.exports = {
 
     // Начальные значения
     initial: {
-        userCoins: 1000,
+        userCoins: 2000,
         shipFuel: 200,      // Обновлено до 200 (было 150) - для дальних рейсов
         shipMaxFuel: 200,   // Обновлено до 200 (было 150) - для дальних рейсов
         shipHealth: 100,
