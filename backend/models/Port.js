@@ -1,4 +1,5 @@
 const { getSupabase } = require('../config/database');
+const gameConfig = require('../config/gameConfig');
 
 class Port {
     constructor(data) {
@@ -80,16 +81,61 @@ class Port {
         return this.availableCargo.find(c => c.type === cargoType);
     }
 
-    async addCargo(cargoType, amount, price = 0) {
+    /**
+     * Рассчитывает динамическую цену груза на основе текущего количества
+     * @param {number} currentAmount - Текущее количество груза в порту
+     * @returns {number} - Цена за единицу груза
+     */
+    static calculateDynamicPrice(currentAmount) {
+        const pricing = gameConfig.economy.portCargoPricing;
+        
+        // Если груза очень мало - максимальная цена
+        if (currentAmount <= pricing.minAmount) {
+            return pricing.maxPrice;
+        }
+        
+        // Нормализуем количество относительно эталонного
+        const normalizedAmount = Math.min(currentAmount / pricing.referenceAmount, 1);
+        
+        // Рассчитываем цену: чем меньше груза, тем выше цена
+        // Формула: minPrice + (maxPrice - minPrice) * (1 - normalizedAmount)
+        const price = pricing.minPrice + (pricing.maxPrice - pricing.minPrice) * (1 - normalizedAmount);
+        
+        // Округляем до целого числа
+        return Math.round(price);
+    }
+
+    async addCargo(cargoType, amount, price = null) {
         const supabase = getSupabase();
+        
+        // Получаем текущее количество груза
+        const { data: current, error: fetchError } = await supabase
+            .from('port_cargo')
+            .select('amount')
+            .eq('port_id', this.id)
+            .eq('cargo_type', cargoType)
+            .single();
+        
+        let newAmount, newPrice;
+        
+        if (fetchError || !current) {
+            // Если груза еще нет - создаем новый
+            newAmount = amount;
+            newPrice = price !== null ? price : Port.calculateDynamicPrice(newAmount);
+        } else {
+            // Если груз уже есть - добавляем к существующему
+            newAmount = current.amount + amount;
+            // Пересчитываем цену на основе нового количества
+            newPrice = Port.calculateDynamicPrice(newAmount);
+        }
         
         const { data, error } = await supabase
             .from('port_cargo')
             .upsert({
                 port_id: this.id,
                 cargo_type: cargoType,
-                amount: amount,
-                price: price
+                amount: newAmount,
+                price: newPrice
             }, {
                 onConflict: 'port_id,cargo_type'
             })
@@ -101,10 +147,10 @@ class Port {
         // Обновляем локальный кэш
         const existing = this.availableCargo.find(c => c.type === cargoType);
         if (existing) {
-            existing.amount += amount;
-            if (price > 0) existing.price = price;
+            existing.amount = newAmount;
+            existing.price = newPrice;
         } else {
-            this.availableCargo.push({ type: cargoType, amount, price });
+            this.availableCargo.push({ type: cargoType, amount: newAmount, price: newPrice });
         }
         
         return this;
@@ -128,10 +174,15 @@ class Port {
         }
         
         const newAmount = current.amount - amount;
+        // Пересчитываем цену на основе нового количества
+        const newPrice = Port.calculateDynamicPrice(newAmount);
         
         const { error } = await supabase
             .from('port_cargo')
-            .update({ amount: newAmount })
+            .update({ 
+                amount: newAmount,
+                price: newPrice
+            })
             .eq('port_id', this.id)
             .eq('cargo_type', cargoType);
         
@@ -141,6 +192,7 @@ class Port {
         const cargo = this.availableCargo.find(c => c.type === cargoType);
         if (cargo) {
             cargo.amount = newAmount;
+            cargo.price = newPrice;
         }
         
         return this;

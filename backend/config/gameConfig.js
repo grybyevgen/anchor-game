@@ -35,7 +35,15 @@ module.exports = {
         baseRewardPerCargo: 10,
         rewardMultiplierPerCrewLevel: 0.1,
         marketPriceMultiplier: 0.8, // 80% от награды
-        repairCostPerHealth: 5
+        repairCostPerHealth: 5,
+        // Динамическое ценообразование в портах
+        portCargoPricing: {
+            basePrice: 5,           // Базовая цена (средняя)
+            minPrice: 2,             // Минимальная цена (когда груза много)
+            maxPrice: 15,            // Максимальная цена (когда груза мало)
+            referenceAmount: 5000,   // Эталонное количество для расчета
+            minAmount: 100           // Минимум, ниже которого цена = maxPrice
+        }
     },
 
     // Начальные значения
