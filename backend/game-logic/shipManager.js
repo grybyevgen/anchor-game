@@ -287,77 +287,57 @@ async function unloadCargo(shipId, destination = 'market') {
         // Рассчитываем итоговую цену за единицу с учетом спроса
         const pricePerUnit = basePricePerUnit * demandMultiplier;
         
-        // Рассчитываем общую награду
+        // Рассчитываем валовую прибыль (до вычета сборов и налогов)
         let baseReward = pricePerUnit * ship.cargo.amount;
         
         // Применяем бонус от уровня экипажа
         const crewBonus = 1 + (ship.crewLevel - 1) * gameConfig.economy.rewardMultiplierPerCrewLevel;
-        const reward = Math.floor(baseReward * crewBonus);
+        const grossReward = Math.floor(baseReward * crewBonus);
 
-        // Сохраняем данные груза перед очисткой
+        // Сохраняем данные груза
         const cargoData = {
             type: ship.cargo.type,
             amount: ship.cargo.amount
         };
 
-        // Рассчитываем портовые сборы за выгрузку
-        const basePortFees = gameConfig.economy.portFees.base + 
+        // ВСЕ СБОРЫ И НАЛОГИ ТЕПЕРЬ В % ОТ ПРИБЫЛИ
+        // Портовые сборы: фиксированная часть + процент от прибыли
+        const portFeesBase = gameConfig.economy.portFees.base + 
                             (gameConfig.economy.portFees.perCargoUnit * cargoData.amount);
+        const portFeesPercentage = gameConfig.economy.portFees.percentageOfCargoValue || 0;
+        const portFees = portFeesBase + Math.floor(grossReward * portFeesPercentage);
         
-        // Добавляем процент от стоимости груза
-        const cargoValueFee = Math.floor(reward * (gameConfig.economy.portFees.percentageOfCargoValue || 0));
-        const portFees = basePortFees + cargoValueFee;
-        
-        // Рассчитываем налог на прибыль
-        // Прибыль = доход - стоимость_покупки_груза (но у нас нет информации о стоимости покупки)
-        // Поэтому считаем налог от валовой прибыли с учетом сборов
-        const profitBeforeTax = reward - portFees;
-        const profitTax = Math.floor(profitBeforeTax * (gameConfig.economy.profitTax || 0));
+        // Налог на прибыль: процент от прибыли после портовых сборов
+        const profitAfterPortFees = grossReward - portFees;
+        const profitTax = Math.floor(profitAfterPortFees * (gameConfig.economy.profitTax || 0));
+
+        // Рассчитываем итоговую прибыль (все вычитается из прибыли)
+        const netReward = grossReward - portFees - profitTax;
 
         const user = await User.findById(ship.userId);
         if (!user) {
             throw new Error('Пользователь не найден');
         }
 
+        // ВАЖНО: Сначала начисляем валовую прибыль, потом вычитаем сборы
+        // Это гарантирует, что у игрока будет достаточно денег
+        await user.addCoins(grossReward);
+        
+        // Теперь вычитаем все сборы и налоги из прибыли
+        if (portFees > 0) {
+            await user.spendCoins(portFees);
+        }
+        if (profitTax > 0) {
+            await user.spendCoins(profitTax);
+        }
+
+        // Добавляем груз в рынок/порт ТОЛЬКО после финансовых операций
         if (destination === 'port') {
             // Продажа в порт - пополняем запасы порта
             await currentPort.addCargo(cargoData.type, cargoData.amount);
-            
-            // Списываем портовые сборы
-            if (user.coins < portFees) {
-                throw new Error(`Недостаточно монет для уплаты портовых сборов (${portFees})`);
-            }
-            await user.spendCoins(portFees);
-            
-            // Списываем налог на прибыль
-            if (profitTax > 0) {
-                if (user.coins < profitTax) {
-                    throw new Error(`Недостаточно монет для уплаты налога на прибыль (${profitTax})`);
-                }
-                await user.spendCoins(profitTax);
-            }
-            
-            // Начисляем монеты за продажу (с учетом сборов и налогов)
-            const netReward = reward - portFees - profitTax;
-            await user.addCoins(netReward);
-            
-            // Очищаем груз
-            ship.cargo = null;
-            await ship.save();
-            
-            return { 
-                success: true, 
-                reward: netReward, 
-                grossReward: reward,
-                portFees,
-                profitTax,
-                cargo: cargoData, 
-                destination,
-                distance
-            };
         } else {
-            // Продажа на рынок (как раньше)
-            const marketPrice = Math.floor(reward * gameConfig.economy.marketPriceMultiplier);
+            // Продажа на рынок
+            const marketPrice = Math.floor(grossReward * gameConfig.economy.marketPriceMultiplier);
             await Cargo.addToMarket({
                 type: cargoData.type,
                 amount: cargoData.amount,
@@ -365,40 +345,22 @@ async function unloadCargo(shipId, destination = 'market') {
                 sellerId: ship.userId,
                 price: marketPrice
             });
-
-            // Списываем портовые сборы
-            if (user.coins < portFees) {
-                throw new Error(`Недостаточно монет для уплаты портовых сборов (${portFees})`);
-            }
-            await user.spendCoins(portFees);
-            
-            // Списываем налог на прибыль
-            if (profitTax > 0) {
-                if (user.coins < profitTax) {
-                    throw new Error(`Недостаточно монет для уплаты налога на прибыль (${profitTax})`);
-                }
-                await user.spendCoins(profitTax);
-            }
-            
-            // Начисляем монеты за продажу (с учетом сборов и налогов)
-            const netReward = reward - portFees - profitTax;
-            await user.addCoins(netReward);
-
-            // И только потом очищаем груз
-            ship.cargo = null;
-            await ship.save();
-            
-            return { 
-                success: true, 
-                reward: netReward, 
-                grossReward: reward,
-                portFees,
-                profitTax,
-                cargo: cargoData, 
-                destination,
-                distance
-            };
         }
+
+        // Очищаем груз ТОЛЬКО после всех операций
+        ship.cargo = null;
+        await ship.save();
+        
+        return { 
+            success: true, 
+            reward: netReward, 
+            grossReward: grossReward,
+            portFees,
+            profitTax,
+            cargo: cargoData, 
+            destination,
+            distance
+        };
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
         // В случае ошибки состояние должно остаться согласованным

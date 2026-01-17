@@ -33,14 +33,9 @@ router.get('/user/:userId', asyncHandler(async (req, res) => {
     res.json({ success: true, ships });
 }));
 
-// Купить судно
-router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
-    const { userId, type } = req.body;
-    
-    const price = gameConfig.shipPrices[type];
-    if (!price) {
-        return res.status(400).json({ success: false, error: 'Неверный тип судна' });
-    }
+// Получить цену судна для пользователя (без покупки)
+router.get('/price/:userId/:type', asyncHandler(async (req, res) => {
+    const { userId, type } = req.params;
     
     // Находим пользователя
     let user;
@@ -53,10 +48,67 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
     if (!user) {
         return res.status(404).json({ success: false, error: 'Пользователь не найден' });
     }
+
+    const basePrice = gameConfig.shipPrices[type];
+    if (!basePrice) {
+        return res.status(400).json({ success: false, error: 'Неверный тип судна' });
+    }
+
+    // Считаем количество судов данного типа
+    const existingShips = await Ship.find({ userId: user.id });
+    const shipsOfType = existingShips.filter(ship => ship.type === type);
+    const shipsCount = shipsOfType.length;
+
+    // Рассчитываем прогрессивную цену: базовая_цена × 10^количество
+    const price = basePrice * Math.pow(10, shipsCount);
+    
+    res.json({
+        success: true,
+        type,
+        typeName: gameConfig.shipNames[type],
+        basePrice,
+        currentPrice: price,
+        existingShipsCount: shipsCount,
+        nextShipNumber: shipsCount + 1
+    });
+}));
+
+// Купить судно
+router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
+    const { userId, type } = req.body;
+    
+    // Находим пользователя
+    let user;
+    if (userId.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userId) });
+    } else {
+        user = await User.findById(userId);
+    }
+    
+    if (!user) {
+        return res.status(404).json({ success: false, error: 'Пользователь не найден' });
+    }
+
+    // Получаем базовую цену из конфига
+    const basePrice = gameConfig.shipPrices[type];
+    if (!basePrice) {
+        return res.status(400).json({ success: false, error: 'Неверный тип судна' });
+    }
+
+    // Считаем количество судов данного типа у пользователя
+    const existingShips = await Ship.find({ userId: user.id });
+    const shipsOfType = existingShips.filter(ship => ship.type === type);
+    const shipsCount = shipsOfType.length;
+
+    // Рассчитываем прогрессивную цену: базовая_цена × 10^количество
+    const price = basePrice * Math.pow(10, shipsCount);
     
     // Проверяем баланс
     if (user.coins < price) {
-        return res.status(400).json({ success: false, error: 'Недостаточно монет' });
+        return res.status(400).json({ 
+            success: false, 
+            error: `Недостаточно монет. Требуется: ${price} монет (${shipsCount + 1}-е судно типа "${gameConfig.shipNames[type]}")` 
+        });
     }
     
     // Получаем стартовый порт
@@ -82,7 +134,13 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
         // Списываем монеты
         await user.spendCoins(price);
         
-        res.json({ success: true, ship: newShip });
+        res.json({ 
+            success: true, 
+            ship: newShip,
+            price: price,
+            basePrice: basePrice,
+            shipNumber: shipsCount + 1  // Номер покупаемого судна
+        });
     } catch (error) {
         const handledError = handleSupabaseError(error);
         throw handledError || error;
