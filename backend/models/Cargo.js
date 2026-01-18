@@ -176,11 +176,12 @@ class Cargo {
         }
 
         // Загружаем груз на судно (только выбранное количество)
-        // Сохраняем порт, где находится груз на рынке (порт покупки)
+        // Сохраняем порт, где находится груз на рынке (порт покупки) и цену покупки
         ship.cargo = {
             type: cargo.cargo_type,
             amount: buyAmount,
-            purchasePortId: cargo.port_id  // Порт, где находится груз на рынке
+            purchasePortId: cargo.port_id,  // Порт, где находится груз на рынке
+            purchasePricePerUnit: pricePerUnit  // Сохраняем цену покупки за единицу
         };
         await ship.save();
 

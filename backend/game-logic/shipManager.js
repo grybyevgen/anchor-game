@@ -207,11 +207,12 @@ async function loadCargo(shipId, cargoType, amount) {
         try {
             await user.spendCoins(cargoPrice);
             
-            // Загружаем груз на судно и сохраняем порт покупки
+            // Загружаем груз на судно и сохраняем порт покупки и цену покупки за единицу
             ship.cargo = { 
                 type: cargoType, 
                 amount,
-                purchasePortId: ship.currentPortId  // Сохраняем порт, где купили груз
+                purchasePortId: ship.currentPortId,  // Сохраняем порт, где купили груз
+                purchasePricePerUnit: cargo.price || 0  // Сохраняем цену покупки за единицу
             };
             await ship.save();
             
@@ -250,79 +251,81 @@ async function unloadCargo(shipId, destination = 'market') {
     // Используем транзакцию для атомарности операций
     try {
         const currentPort = await Port.findById(ship.currentPortId);
-        const purchasePort = await Port.findById(ship.cargo.purchasePortId);
         
-        // Рассчитываем расстояние между портами
-        const distance = Port.calculateDistance(purchasePort, currentPort);
+        // Получаем цену покупки за единицу (сохранена при загрузке)
+        const purchasePricePerUnit = ship.cargo.purchasePricePerUnit || 0;
         
-        // Базовая стоимость груза по типу
-        const cargoBaseValue = gameConfig.economy.cargoBaseValue[ship.cargo.type] || 25;
-        
-        // Рассчитываем базовую цену продажи с учетом расстояния
-        // Формула: базовая_стоимость + (расстояние * множитель_расстояния)
-        const basePricePerUnit = cargoBaseValue + (distance * gameConfig.economy.distancePriceMultiplier);
-        
-        // Рассчитываем множитель спроса/предложения в порту назначения
+        // Получаем текущую цену в порту назначения (цена, по которой порт покупает/продает груз)
         const portCargo = currentPort.getCargo(ship.cargo.type);
-        let demandMultiplier = 1.0;
         
-        if (portCargo) {
-            const pricing = gameConfig.economy.portCargoPricing;
-            const normalizedAmount = Math.min(portCargo.amount / pricing.referenceAmount, 1);
-            // Чем меньше груза в порту, тем выше спрос (и цена)
-            demandMultiplier = gameConfig.economy.demandMultiplier.min + 
-                             (gameConfig.economy.demandMultiplier.max - gameConfig.economy.demandMultiplier.min) * (1 - normalizedAmount);
+        // Цена продажи = текущая цена в порту назначения (если груз есть, используется цена порта)
+        // Если груза нет в порту, используем максимальную цену из конфига
+        let salePricePerUnit;
+        if (portCargo && portCargo.price) {
+            // Используем текущую цену порта (это цена, по которой порт покупает/продает груз)
+            salePricePerUnit = portCargo.price;
         } else {
-            // Если груза нет в порту - максимальный спрос
-            demandMultiplier = gameConfig.economy.demandMultiplier.max;
+            // Если груза нет в порту, используем максимальную цену из конфига
+            const pricing = gameConfig.economy.portCargoPricing;
+            salePricePerUnit = pricing.maxPrice;
         }
         
-        // Рассчитываем итоговую цену за единицу с учетом спроса
-        const pricePerUnit = basePricePerUnit * demandMultiplier;
+        // Рассчитываем общую стоимость покупки и продажи
+        const totalPurchasePrice = purchasePricePerUnit * ship.cargo.amount;
+        const totalSalePrice = salePricePerUnit * ship.cargo.amount;
         
-        // Рассчитываем валовую прибыль (до вычета сборов и налогов)
-        let baseReward = pricePerUnit * ship.cargo.amount;
+        // Прибыль = выручка - затраты
+        const grossProfit = totalSalePrice - totalPurchasePrice;
         
-        // Применяем бонус от уровня экипажа
-        const crewBonus = 1 + (ship.crewLevel - 1) * gameConfig.economy.rewardMultiplierPerCrewLevel;
-        const grossReward = Math.floor(baseReward * crewBonus);
-
         // Сохраняем данные груза
         const cargoData = {
             type: ship.cargo.type,
             amount: ship.cargo.amount
         };
 
-        // ВСЕ СБОРЫ И НАЛОГИ ТЕПЕРЬ В % ОТ ПРИБЫЛИ
-        // Портовые сборы: только процент от прибыли (включает вход с грузом + выгрузку)
-        const unloadingPercentage = gameConfig.economy.portFees.unloadingPercentage || 0.15;
-        const portFees = Math.floor(grossReward * unloadingPercentage);
+        // СБОРЫ И НАЛОГИ РАССЧИТЫВАЮТСЯ ОТ ПРИБЫЛИ (если прибыль положительная)
+        let portFees = 0;
+        let profitTax = 0;
+        let netReward = 0;
         
-        // Налог на прибыль: процент от прибыли после портовых сборов
-        const profitAfterPortFees = grossReward - portFees;
-        const profitTax = profitAfterPortFees > 0 
-            ? Math.floor(profitAfterPortFees * (gameConfig.economy.profitTax || 0))
-            : 0;  // Если прибыль отрицательная - налога нет
+        if (grossProfit > 0) {
+            // Портовые сборы: процент от прибыли (включает вход с грузом + выгрузку)
+            const unloadingPercentage = gameConfig.economy.portFees.unloadingPercentage || 0.15;
+            portFees = Math.floor(grossProfit * unloadingPercentage);
+            
+            // Налог на прибыль: процент от прибыли после портовых сборов
+            const profitAfterPortFees = grossProfit - portFees;
+            profitTax = profitAfterPortFees > 0 
+                ? Math.floor(profitAfterPortFees * (gameConfig.economy.profitTax || 0))
+                : 0;
 
-        // Рассчитываем итоговую прибыль (все вычитается из прибыли)
-        const netReward = grossReward - portFees - profitTax;
+            // Чистая прибыль после всех сборов и налогов
+            netReward = grossProfit - portFees - profitTax;
+        } else {
+            // Если убыток - сборов и налогов нет
+            netReward = grossProfit;  // Отрицательное значение (убыток)
+        }
+        
+        // Финальная сумма к начислению: затраты + чистая прибыль
+        // Если прибыль положительная: возвращаем затраты + чистую прибыль
+        // Если убыток: возвращаем только выручку (меньше затрат)
+        const finalReward = totalPurchasePrice + netReward;
 
         const user = await User.findById(ship.userId);
         if (!user) {
             throw new Error('Пользователь не найден');
         }
 
-        // Начисляем чистую прибыль одной операцией (сборы и налоги уже вычтены)
-        // Это гарантирует, что нет проблем с недостатком денег
-        await user.addCoins(netReward);
+        // Начисляем финальную сумму
+        await user.addCoins(finalReward);
 
         // Добавляем груз в рынок/порт ТОЛЬКО после финансовых операций
         if (destination === 'port') {
             // Продажа в порт - пополняем запасы порта
             await currentPort.addCargo(cargoData.type, cargoData.amount);
         } else {
-            // Продажа на рынок
-            const marketPrice = Math.floor(grossReward * gameConfig.economy.marketPriceMultiplier);
+            // Продажа на рынок - используем цену продажи в порту
+            const marketPrice = Math.floor(totalSalePrice * gameConfig.economy.marketPriceMultiplier);
             await Cargo.addToMarket({
                 type: cargoData.type,
                 amount: cargoData.amount,
@@ -338,13 +341,16 @@ async function unloadCargo(shipId, destination = 'market') {
         
         return { 
             success: true, 
-            reward: netReward, 
-            grossReward: grossReward,
+            reward: finalReward,
+            grossProfit: grossProfit,  // Прибыль до налогов (может быть отрицательной)
+            totalSalePrice: totalSalePrice,  // Общая сумма продажи
+            totalPurchasePrice: totalPurchasePrice,  // Общая сумма покупки
+            salePricePerUnit: salePricePerUnit,
+            purchasePricePerUnit: purchasePricePerUnit,
             portFees,
             profitTax,
             cargo: cargoData, 
-            destination,
-            distance
+            destination
         };
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
