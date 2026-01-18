@@ -108,20 +108,13 @@ async function checkAndCompleteTravels() {
             try {
                 const ship = new Ship(shipData);
                 
-                // Взимаем портовые сборы при прибытии (базовый сбор)
-                const user = await User.findById(ship.userId);
-                if (user) {
-                    const portFees = gameConfig.economy.portFees.base;
-                    if (user.coins >= portFees) {
-                        try {
-                            await user.spendCoins(portFees);
-                            console.log(`💰 Портовые сборы: ${portFees} монет за вход в порт (судно ${ship.name})`);
-                        } catch (feeError) {
-                            // Если не хватает денег - все равно завершаем путешествие
-                            // В реальности можно заблокировать судно, но для игрового процесса лучше просто предупредить
-                            console.warn(`⚠️ Недостаточно денег для портовых сборов (${portFees}) для судна ${ship.name}`);
-                        }
-                    }
+                // Портовые сборы теперь взимаются только при выгрузке груза
+                // Если судно с грузом - сбор будет взят при выгрузке
+                // Если судно пустое - сборов нет
+                if (ship.cargo) {
+                    console.log(`🚢 Судно ${ship.name} прибыло с грузом. Сбор будет взят при выгрузке.`);
+                } else {
+                    console.log(`✅ Судно ${ship.name} прибыло пустым. Сборов нет.`);
                 }
                 
                 await ship.completeTravel();
@@ -301,15 +294,15 @@ async function unloadCargo(shipId, destination = 'market') {
         };
 
         // ВСЕ СБОРЫ И НАЛОГИ ТЕПЕРЬ В % ОТ ПРИБЫЛИ
-        // Портовые сборы: фиксированная часть + процент от прибыли
-        const portFeesBase = gameConfig.economy.portFees.base + 
-                            (gameConfig.economy.portFees.perCargoUnit * cargoData.amount);
-        const portFeesPercentage = gameConfig.economy.portFees.percentageOfCargoValue || 0;
-        const portFees = portFeesBase + Math.floor(grossReward * portFeesPercentage);
+        // Портовые сборы: только процент от прибыли (включает вход с грузом + выгрузку)
+        const unloadingPercentage = gameConfig.economy.portFees.unloadingPercentage || 0.15;
+        const portFees = Math.floor(grossReward * unloadingPercentage);
         
         // Налог на прибыль: процент от прибыли после портовых сборов
         const profitAfterPortFees = grossReward - portFees;
-        const profitTax = Math.floor(profitAfterPortFees * (gameConfig.economy.profitTax || 0));
+        const profitTax = profitAfterPortFees > 0 
+            ? Math.floor(profitAfterPortFees * (gameConfig.economy.profitTax || 0))
+            : 0;  // Если прибыль отрицательная - налога нет
 
         // Рассчитываем итоговую прибыль (все вычитается из прибыли)
         const netReward = grossReward - portFees - profitTax;
@@ -319,17 +312,9 @@ async function unloadCargo(shipId, destination = 'market') {
             throw new Error('Пользователь не найден');
         }
 
-        // ВАЖНО: Сначала начисляем валовую прибыль, потом вычитаем сборы
-        // Это гарантирует, что у игрока будет достаточно денег
-        await user.addCoins(grossReward);
-        
-        // Теперь вычитаем все сборы и налоги из прибыли
-        if (portFees > 0) {
-            await user.spendCoins(portFees);
-        }
-        if (profitTax > 0) {
-            await user.spendCoins(profitTax);
-        }
+        // Начисляем чистую прибыль одной операцией (сборы и налоги уже вычтены)
+        // Это гарантирует, что нет проблем с недостатком денег
+        await user.addCoins(netReward);
 
         // Добавляем груз в рынок/порт ТОЛЬКО после финансовых операций
         if (destination === 'port') {
