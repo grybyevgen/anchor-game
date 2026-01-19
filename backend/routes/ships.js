@@ -174,12 +174,12 @@ router.post('/:shipId/load', validateLoadCargo, asyncHandler(async (req, res) =>
 // Выгрузить груз
 router.post('/:shipId/unload', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
-    const { destination } = req.body; // 'market' или 'port'
+    const { destination } = req.body; // Всегда 'port' (рынок удален)
     
     // Проверяем завершенные путешествия перед выгрузкой
     await checkShipTravel(shipId);
     
-    const result = await unloadCargo(shipId, destination || 'market');
+    const result = await unloadCargo(shipId, destination || 'port');
     res.json(result);
 }));
 
@@ -194,13 +194,13 @@ router.post('/:shipId/repair', validateUUID('shipId'), asyncHandler(async (req, 
     res.json(result);
 }));
 
-// Заправить судно (бункеровка)
+// Заправить судно (бункеровка) - теперь из порта
 router.post('/:shipId/refuel', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
-    const { cargoId, amount } = req.body;
+    const { cargoType, amount } = req.body; // cargoType должен быть 'oil', amount - количество
     
-    if (!cargoId) {
-        return res.status(400).json({ success: false, error: 'cargoId обязателен' });
+    if (!cargoType || cargoType !== 'oil') {
+        return res.status(400).json({ success: false, error: 'cargoType должен быть "oil"' });
     }
     
     if (!amount || amount <= 0) {
@@ -210,7 +210,7 @@ router.post('/:shipId/refuel', validateUUID('shipId'), asyncHandler(async (req, 
     // Проверяем завершенные путешествия перед заправкой
     await checkShipTravel(shipId);
     
-    const result = await refuelShip(shipId, cargoId, amount);
+    const result = await refuelShip(shipId, cargoType, amount);
     res.json(result);
 }));
 

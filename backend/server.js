@@ -9,7 +9,6 @@ const { errorHandler, notFoundHandler, asyncHandler, handleSupabaseError } = req
 const { telegramAuthMiddleware } = require('./middleware/auth');
 const shipRoutes = require('./routes/ships');
 const portRoutes = require('./routes/ports');
-const marketRoutes = require('./routes/market');
 const User = require('./models/User');
 
 const app = express();
@@ -69,7 +68,6 @@ app.use('/api/', telegramAuthMiddleware);
 // Routes
 app.use('/api/ships', shipRoutes);
 app.use('/api/ports', portRoutes);
-app.use('/api/market', marketRoutes);
 
 // Инициализация пользователя
 const { validateUserInit } = require('./middleware/validation');
