@@ -145,10 +145,17 @@ class Port {
         
         let newAmount, newPrice;
         
-        if (fetchError || !current) {
+        // Правильно обрабатываем ошибку "не найдено" (код 'PGRST116')
+        // Это нормальная ситуация, когда груза еще нет в порту
+        const isNotFound = fetchError && fetchError.code === 'PGRST116';
+        
+        if (isNotFound || !current) {
             // Если груза еще нет - создаем новый
             newAmount = amount;
             newPrice = price !== null ? price : Port.calculateDynamicPrice(newAmount);
+        } else if (fetchError) {
+            // Если другая ошибка - пробрасываем её
+            throw fetchError;
         } else {
             // Если груз уже есть - добавляем к существующему
             newAmount = current.amount + amount;
@@ -169,7 +176,10 @@ class Port {
             .select()
             .single();
         
-        if (error) throw error;
+        if (error) {
+            console.error('Ошибка при upsert груза в порт:', error);
+            throw error;
+        }
         
         // Обновляем локальный кэш
         const existing = this.availableCargo.find(c => c.type === cargoType);
@@ -194,9 +204,17 @@ class Port {
             .eq('cargo_type', cargoType)
             .single();
         
-        if (fetchError) throw fetchError;
+        // Правильно обрабатываем ошибку "не найдено"
+        if (fetchError) {
+            // Если это ошибка "не найдено" - груза нет, это нормально
+            if (fetchError.code === 'PGRST116') {
+                throw new Error('Груз не найден в порту');
+            }
+            // Иначе пробрасываем ошибку
+            throw fetchError;
+        }
         
-        if (current.amount < amount) {
+        if (!current || current.amount < amount) {
             throw new Error('Недостаточно груза в порту');
         }
         
@@ -213,7 +231,10 @@ class Port {
             .eq('port_id', this.id)
             .eq('cargo_type', cargoType);
         
-        if (error) throw error;
+        if (error) {
+            console.error('Ошибка при обновлении груза в порту:', error);
+            throw error;
+        }
         
         // Обновляем локальный кэш
         const cargo = this.availableCargo.find(c => c.type === cargoType);
