@@ -442,6 +442,14 @@ async function refuelShip(shipId, cargoType, amount) {
         return { success: false, error: 'Порт не найден' };
     }
 
+    // Проверяем, что порт генерирует нефть (бункеровка возможна только в портах, где генерируется нефть)
+    if (!portManager.canLoadCargo(port.name, 'oil')) {
+        return { 
+            success: false, 
+            error: `Бункеровка возможна только в портах, где генерируется нефть. Этот порт не производит нефть.` 
+        };
+    }
+
     const cargo = port.getCargo('oil');
     if (!cargo || cargo.amount < amount) {
         return { success: false, error: `Недостаточно нефти в порту. Доступно: ${cargo?.amount || 0}` };
