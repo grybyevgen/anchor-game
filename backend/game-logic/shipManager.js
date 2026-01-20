@@ -3,6 +3,7 @@ const Port = require('../models/Port');
 const Cargo = require('../models/Cargo');
 const User = require('../models/User');
 const gameConfig = require('../config/gameConfig');
+const portManager = require('./portManager');
 
 /**
  * Отправить судно в порт
@@ -179,6 +180,15 @@ async function loadCargo(shipId, cargoType, amount) {
     }
     
     const port = await Port.findById(ship.currentPortId);
+    
+    // Проверяем, генерирует ли порт этот ресурс (можно загрузить только то, что порт генерирует)
+    if (!portManager.canLoadCargo(port.name, cargoType)) {
+        return { 
+            success: false, 
+            error: `Этот порт не генерирует ${cargoType}. Можно загрузить только ресурсы, которые порт производит.` 
+        };
+    }
+    
     const cargo = port.getCargo(cargoType);
     
     if (!cargo || cargo.amount < amount) {
@@ -252,6 +262,24 @@ async function unloadCargo(shipId, destination = 'port') {
     try {
         const currentPort = await Port.findById(ship.currentPortId);
         
+        // Проверяем, можно ли выгрузить этот груз в порт (требуется для генерации)
+        if (!portManager.canUnloadCargo(currentPort.name, ship.cargo.type)) {
+            return { 
+                success: false, 
+                error: `Этот порт не принимает ${ship.cargo.type}. Можно выгрузить только ресурсы, которые требуются для генерации.` 
+            };
+        }
+        
+        // Выгружаем груз в порт
+        await currentPort.addCargo(ship.cargo.type, ship.cargo.amount);
+        
+        // Пытаемся запустить генерацию ресурсов
+        const generationResult = await portManager.processCargoGeneration(
+            currentPort, 
+            ship.cargo.type, 
+            ship.cargo.amount
+        );
+        
         // Получаем цену покупки за единицу (сохранена при загрузке)
         const purchasePricePerUnit = ship.cargo.purchasePricePerUnit || 0;
         
@@ -319,9 +347,6 @@ async function unloadCargo(shipId, destination = 'port') {
         // Начисляем финальную сумму
         await user.addCoins(finalReward);
 
-        // Всегда продаем в порт - пополняем запасы порта
-        await currentPort.addCargo(cargoData.type, cargoData.amount);
-
         // Очищаем груз ТОЛЬКО после всех операций
         ship.cargo = null;
         await ship.save();
@@ -337,7 +362,8 @@ async function unloadCargo(shipId, destination = 'port') {
             portFees,
             profitTax,
             cargo: cargoData, 
-            destination
+            destination,
+            generation: generationResult  // Информация о генерации ресурсов
         };
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
