@@ -45,7 +45,7 @@ async function sendShipToPort(shipId, portId) {
     
     // Если судно перевозит груз, расход немного увеличивается
     if (ship.cargo) {
-        fuelCost = fuelCost * 1.1; // +10% к расходу с грузом
+        fuelCost = fuelCost * 1.05; // +5% к расходу с грузом (чуть мягче, чтобы полный круг был реалистичен)
     }
     
     fuelCost = Math.round(fuelCost);
