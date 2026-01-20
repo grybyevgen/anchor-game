@@ -113,6 +113,7 @@ async function processCargoGeneration(port, unloadedCargoType, unloadedAmount) {
 }
 
 module.exports = {
+    PORT_GENERATION_RULES,
     getPortGenerationRules,
     canLoadCargo,
     canUnloadCargo,

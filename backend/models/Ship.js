@@ -15,7 +15,9 @@ class Ship {
         this.cargo = data.cargo_type ? {
             type: data.cargo_type,
             amount: data.cargo_amount,
-            purchasePortId: data.cargo_purchase_port_id
+            purchasePortId: data.cargo_purchase_port_id,
+            // Может быть null для старых записей, поэтому по умолчанию 0
+            purchasePricePerUnit: data.cargo_purchase_price_per_unit ?? 0
         } : null;
         this.isTraveling = data.is_traveling;
         this.travelStartTime = data.travel_start_time;
@@ -88,6 +90,7 @@ class Ship {
             cargo_type: this.cargo ? this.cargo.type : null,
             cargo_amount: this.cargo ? this.cargo.amount : null,
             cargo_purchase_port_id: this.cargo?.purchasePortId || null,
+            cargo_purchase_price_per_unit: this.cargo ? (this.cargo.purchasePricePerUnit || 0) : null,
             is_traveling: this.isTraveling,
             travel_start_time: this.travelStartTime,
             travel_end_time: this.travelEndTime,

@@ -280,7 +280,7 @@ async function unloadCargo(shipId, destination = 'port') {
             ship.cargo.amount
         );
         
-        // Получаем цену покупки за единицу (сохранена при загрузке)
+        // Получаем цену покупки за единицу (сохранена при загрузке и БД)
         const purchasePricePerUnit = ship.cargo.purchasePricePerUnit || 0;
         
         // Получаем текущую цену в порту назначения (цена, по которой порт покупает/продает груз)
@@ -296,6 +296,17 @@ async function unloadCargo(shipId, destination = 'port') {
             // Если груза нет в порту, используем максимальную цену из конфига
             const pricing = gameConfig.economy.portCargoPricing;
             salePricePerUnit = pricing.maxPrice;
+        }
+
+        // Учитываем бонус за расстояние между портом покупки и текущим портом (если возможно)
+        if (ship.cargo.purchasePortId) {
+            const purchasePort = await Port.findById(ship.cargo.purchasePortId);
+            if (purchasePort) {
+                const distance = Port.calculateDistance(purchasePort, currentPort);
+                const distanceMultiplier = gameConfig.economy.distancePriceMultiplier || 0;
+                // Бонус добавляем к цене за единицу
+                salePricePerUnit += Math.round(distance * distanceMultiplier);
+            }
         }
         
         // Рассчитываем общую стоимость покупки и продажи
