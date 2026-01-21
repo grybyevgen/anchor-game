@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255),
     first_name VARCHAR(255),
     last_name VARCHAR(255),
-    coins INTEGER DEFAULT 1000 CHECK (coins >= 0),
+    coins INTEGER DEFAULT 6000 CHECK (coins >= 0),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_active TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -50,11 +50,23 @@ CREATE TABLE IF NOT EXISTS ships (
     crew_level INTEGER DEFAULT 1 CHECK (crew_level >= 1 AND crew_level <= 10),
     cargo_type VARCHAR(50) CHECK (cargo_type IN ('oil', 'materials', 'provisions')),
     cargo_amount INTEGER CHECK (cargo_amount >= 0),
+    cargo_purchase_port_id UUID REFERENCES ports(id),
+    cargo_purchase_price_per_unit INTEGER CHECK (cargo_purchase_price_per_unit >= 0),
     is_traveling BOOLEAN DEFAULT FALSE,
     travel_start_time TIMESTAMP WITH TIME ZONE,
     travel_end_time TIMESTAMP WITH TIME ZONE,
     destination_port_id UUID REFERENCES ports(id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    -- Статистика по судну
+    purchase_price INTEGER DEFAULT 0 CHECK (purchase_price >= 0),
+    total_distance_nm BIGINT DEFAULT 0 CHECK (total_distance_nm >= 0),
+    total_trips INTEGER DEFAULT 0 CHECK (total_trips >= 0),
+    total_cargo_moved INTEGER DEFAULT 0 CHECK (total_cargo_moved >= 0),
+    total_profit INTEGER DEFAULT 0,
+    total_fuel_cost INTEGER DEFAULT 0 CHECK (total_fuel_cost >= 0),
+    total_cargo_cost INTEGER DEFAULT 0 CHECK (total_cargo_cost >= 0),
+    total_repair_cost INTEGER DEFAULT 0 CHECK (total_repair_cost >= 0),
+    total_tow_cost INTEGER DEFAULT 0 CHECK (total_tow_cost >= 0)
 );
 
 CREATE INDEX idx_ships_user_id ON ships(user_id);
@@ -114,12 +126,39 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Функция для расчета динамической цены груза в порту
+CREATE OR REPLACE FUNCTION calculate_port_cargo_price(current_amount INTEGER)
+RETURNS INTEGER AS $$
+DECLARE
+    base_price INTEGER := 7;
+    min_price INTEGER := 4;
+    max_price INTEGER := 10;
+    reference_amount INTEGER := 4000;
+    min_amount INTEGER := 200;
+    normalized_amount NUMERIC;
+    calculated_price NUMERIC;
+BEGIN
+    -- Если груза очень мало - максимальная цена
+    IF current_amount <= min_amount THEN
+        RETURN max_price;
+    END IF;
+    
+    -- Нормализуем количество относительно эталонного
+    normalized_amount := LEAST(current_amount::NUMERIC / reference_amount, 1.0);
+    
+    -- Рассчитываем цену: чем меньше груза, тем выше цена
+    calculated_price := min_price + (max_price - min_price) * (1 - normalized_amount);
+    
+    -- Округляем до целого числа
+    RETURN ROUND(calculated_price);
+END;
+$$ LANGUAGE plpgsql;
+
 -- Вставка начальных портов
 INSERT INTO ports (name, location_lat, location_lng) VALUES
-    ('Порт Санкт-Петербург', 59.9343, 30.3351),
-    ('Порт Владивосток', 43.1056, 131.8735),
-    ('Порт Мурманск', 68.9585, 33.0827),
-    ('Порт Новороссийск', 44.7239, 37.7688)
+    ('Порт "Завод Материалов"', 59.9343, 30.3351),
+    ('Порт "Нефтяной завод"', 43.1056, 131.8735),
+    ('Порт "Провизионный завод"', 44.7239, 37.7688)
 ON CONFLICT (name) DO NOTHING;
 
 -- Вставка начальных грузов в порты
@@ -127,39 +166,30 @@ DO $$
 DECLARE
     port_spb UUID;
     port_vlad UUID;
-    port_murm UUID;
     port_novo UUID;
 BEGIN
-    SELECT id INTO port_spb FROM ports WHERE name = 'Порт Санкт-Петербург';
-    SELECT id INTO port_vlad FROM ports WHERE name = 'Порт Владивосток';
-    SELECT id INTO port_murm FROM ports WHERE name = 'Порт Мурманск';
-    SELECT id INTO port_novo FROM ports WHERE name = 'Порт Новороссийск';
+    SELECT id INTO port_spb FROM ports WHERE name = 'Порт "Завод Материалов"';
+    SELECT id INTO port_vlad FROM ports WHERE name = 'Порт "Нефтяной завод"';
+    SELECT id INTO port_novo FROM ports WHERE name = 'Порт "Провизионный завод"';
     
-    -- Порт СПб
+    -- Порт "Завод Материалов": генерирует МАТЕРИАЛЫ (требует нефть и провизию)
     INSERT INTO port_cargo (port_id, cargo_type, amount, price) VALUES
-        (port_spb, 'oil', 100, 0),
-        (port_spb, 'materials', 50, 0),
-        (port_spb, 'provisions', 75, 0)
+        (port_spb, 'materials', 1000, calculate_port_cargo_price(1000)),
+        (port_spb, 'oil', 0, calculate_port_cargo_price(0)),
+        (port_spb, 'provisions', 0, calculate_port_cargo_price(0))
     ON CONFLICT (port_id, cargo_type) DO NOTHING;
     
-    -- Порт Владивосток
+    -- Порт "Нефтяной завод": генерирует НЕФТЬ (требует материалы и провизию)
     INSERT INTO port_cargo (port_id, cargo_type, amount, price) VALUES
-        (port_vlad, 'oil', 80, 0),
-        (port_vlad, 'materials', 60, 0),
-        (port_vlad, 'provisions', 90, 0)
+        (port_vlad, 'oil', 1000, calculate_port_cargo_price(1000)),
+        (port_vlad, 'materials', 0, calculate_port_cargo_price(0)),
+        (port_vlad, 'provisions', 0, calculate_port_cargo_price(0))
     ON CONFLICT (port_id, cargo_type) DO NOTHING;
     
-    -- Порт Мурманск
+    -- Порт "Провизионный завод": генерирует ПРОВИЗИЮ (требует материалы и нефть)
     INSERT INTO port_cargo (port_id, cargo_type, amount, price) VALUES
-        (port_murm, 'oil', 120, 0),
-        (port_murm, 'materials', 40, 0),
-        (port_murm, 'provisions', 50, 0)
-    ON CONFLICT (port_id, cargo_type) DO NOTHING;
-    
-    -- Порт Новороссийск
-    INSERT INTO port_cargo (port_id, cargo_type, amount, price) VALUES
-        (port_novo, 'oil', 90, 0),
-        (port_novo, 'materials', 70, 0),
-        (port_novo, 'provisions', 80, 0)
+        (port_novo, 'provisions', 1000, calculate_port_cargo_price(1000)),
+        (port_novo, 'materials', 0, calculate_port_cargo_price(0)),
+        (port_novo, 'oil', 0, calculate_port_cargo_price(0))
     ON CONFLICT (port_id, cargo_type) DO NOTHING;
 END $$;
