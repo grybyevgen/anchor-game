@@ -10,8 +10,10 @@ const portManager = require('./portManager');
  * Теперь использует проверку по времени вместо setTimeout
  */
 async function sendShipToPort(shipId, portId) {
+    let ship, currentPort, destinationPort;
+    
     try {
-        const ship = await Ship.findById(shipId);
+        ship = await Ship.findById(shipId);
         if (!ship) {
             console.error(`[sendShipToPort] Судно не найдено: ${shipId}`);
             return { success: false, error: 'Судно не найдено' };
@@ -22,13 +24,13 @@ async function sendShipToPort(shipId, portId) {
             return { success: false, error: 'Судно уже в пути' };
         }
 
-        const destinationPort = await Port.findById(portId);
+        destinationPort = await Port.findById(portId);
         if (!destinationPort) {
             console.error(`[sendShipToPort] Порт назначения не найден: ${portId}`);
             return { success: false, error: 'Порт назначения не найден' };
         }
 
-        const currentPort = await Port.findById(ship.currentPortId);
+        currentPort = await Port.findById(ship.currentPortId);
         if (!currentPort) {
             console.error(`[sendShipToPort] Текущий порт не найден: ${ship.currentPortId} для судна ${shipId}`);
             return { success: false, error: `Текущий порт не найден (ID: ${ship.currentPortId})` };
