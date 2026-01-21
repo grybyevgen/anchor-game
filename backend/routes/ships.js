@@ -111,10 +111,27 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
         });
     }
     
-    // Получаем стартовый порт
+    // Получаем порты и определяем стартовый порт в зависимости от типа судна:
+    // - Танкер (нефть) → Порт Владивосток (генерирует нефть)
+    // - Грузовое (материалы) → Порт Санкт-Петербург (генерирует материалы)
+    // - Снабженец (провизия) → Порт Новороссийск (генерирует провизию)
     const ports = await Port.findAll();
     if (ports.length === 0) {
         return res.status(500).json({ success: false, error: 'Порты не инициализированы' });
+    }
+
+    let startPort = null;
+    if (type === 'tanker') {
+        startPort = ports.find(p => p.name === 'Порт Владивосток');
+    } else if (type === 'cargo') {
+        startPort = ports.find(p => p.name === 'Порт Санкт-Петербург');
+    } else if (type === 'supply') {
+        startPort = ports.find(p => p.name === 'Порт Новороссийск');
+    }
+
+    // Если по каким-то причинам нужный порт не найден — используем первый как запасной вариант
+    if (!startPort) {
+        startPort = ports[0];
     }
     
     try {
@@ -123,7 +140,7 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
             userId: user.id,
             type,
             name: `${gameConfig.shipNames[type]} #${Date.now()}`,
-            currentPortId: ports[0].id,
+            currentPortId: startPort.id,
             fuel: gameConfig.initial.shipFuel,
             maxFuel: gameConfig.initial.shipMaxFuel,
             health: gameConfig.initial.shipHealth,
