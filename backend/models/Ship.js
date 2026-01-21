@@ -24,6 +24,16 @@ class Ship {
         this.travelEndTime = data.travel_end_time;
         this.destinationPortId = data.destination_port_id;
         this.createdAt = data.created_at;
+        // Статистика по судну
+        this.purchasePrice = data.purchase_price ?? 0;
+        this.totalDistanceNm = data.total_distance_nm ?? 0;
+        this.totalTrips = data.total_trips ?? 0;
+        this.totalCargoMoved = data.total_cargo_moved ?? 0;
+        this.totalProfit = data.total_profit ?? 0;
+        this.totalFuelCost = data.total_fuel_cost ?? 0;
+        this.totalCargoCost = data.total_cargo_cost ?? 0;
+        this.totalRepairCost = data.total_repair_cost ?? 0;
+        this.totalTowCost = data.total_tow_cost ?? 0;
     }
 
     static async find(query) {
@@ -67,7 +77,16 @@ class Ship {
                 max_fuel: shipData.maxFuel || 100,
                 health: shipData.health || 100,
                 max_health: shipData.maxHealth || 100,
-                crew_level: shipData.crewLevel || 1
+                crew_level: shipData.crewLevel || 1,
+                purchase_price: shipData.purchasePrice || 0,
+                total_distance_nm: 0,
+                total_trips: 0,
+                total_cargo_moved: 0,
+                total_profit: 0,
+                total_fuel_cost: 0,
+                total_cargo_cost: 0,
+                total_repair_cost: 0,
+                total_tow_cost: 0
             })
             .select()
             .single();
@@ -94,7 +113,16 @@ class Ship {
             is_traveling: this.isTraveling,
             travel_start_time: this.travelStartTime,
             travel_end_time: this.travelEndTime,
-            destination_port_id: this.destinationPortId
+            destination_port_id: this.destinationPortId,
+            purchase_price: this.purchasePrice ?? 0,
+            total_distance_nm: this.totalDistanceNm ?? 0,
+            total_trips: this.totalTrips ?? 0,
+            total_cargo_moved: this.totalCargoMoved ?? 0,
+            total_profit: this.totalProfit ?? 0,
+            total_fuel_cost: this.totalFuelCost ?? 0,
+            total_cargo_cost: this.totalCargoCost ?? 0,
+            total_repair_cost: this.totalRepairCost ?? 0,
+            total_tow_cost: this.totalTowCost ?? 0
         };
         
         const { data, error } = await supabase

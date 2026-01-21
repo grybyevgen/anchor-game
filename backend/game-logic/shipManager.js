@@ -50,6 +50,10 @@ async function sendShipToPort(shipId, portId) {
     
     fuelCost = Math.round(fuelCost);
     
+    // Обновляем статистику по судну: расстояние и количество рейсов
+    ship.totalDistanceNm = (ship.totalDistanceNm || 0) + distance;
+    ship.totalTrips = (ship.totalTrips || 0) + 1;
+
     if (ship.fuel < fuelCost) {
         return { success: false, error: `Недостаточно топлива. Требуется: ${fuelCost}, доступно: ${ship.fuel}` };
     }
@@ -217,6 +221,10 @@ async function loadCargo(shipId, cargoType, amount) {
         try {
             await user.spendCoins(cargoPrice);
             
+            // Обновляем статистику по судну: затраты на груз и перевезённый груз
+            ship.totalCargoCost = (ship.totalCargoCost || 0) + cargoPrice;
+            ship.totalCargoMoved = (ship.totalCargoMoved || 0) + amount;
+
             // Загружаем груз на судно и сохраняем порт покупки и цену покупки за единицу
             ship.cargo = { 
                 type: cargoType, 
@@ -358,7 +366,13 @@ async function unloadCargo(shipId, destination = 'port') {
         // Начисляем финальную сумму
         await user.addCoins(finalReward);
 
-        // Очищаем груз ТОЛЬКО после всех операций
+        // Обновляем статистику по судну:
+        // - прибыль (может быть отрицательной, если рейс в минус)
+        // - перевезённый груз (на случае, если хотим считать только доставленный)
+        ship.totalProfit = (ship.totalProfit || 0) + netReward;
+        ship.totalCargoMoved = (ship.totalCargoMoved || 0) + ship.cargo.amount;
+
+        // Очищаем груз ТОЛЬКО после всех операций и сохраняем судно со статистикой
         ship.cargo = null;
         await ship.save();
         
@@ -411,6 +425,10 @@ async function repairShip(shipId) {
     // Атомарная операция: сначала списываем монеты, потом чиним
     try {
         await user.spendCoins(repairCost);
+
+        // Обновляем статистику по судну: затраты на ремонт
+        ship.totalRepairCost = (ship.totalRepairCost || 0) + repairCost;
+
         ship.health = ship.maxHealth;
         await ship.save();
         
@@ -484,6 +502,9 @@ async function refuelShip(shipId, cargoType, amount) {
     try {
         // Списываем деньги
         await user.spendCoins(cargoPrice);
+
+        // Обновляем статистику по судну: расходы на топливо
+        ship.totalFuelCost = (ship.totalFuelCost || 0) + cargoPrice;
 
         // Заправляем судно
         ship.fuel = Math.min(ship.fuel + actualAmount, ship.maxFuel);
@@ -564,6 +585,9 @@ async function towShip(shipId) {
     try {
         // Списываем деньги
         await user.spendCoins(towCost);
+
+        // Обновляем статистику по судну: затраты на буксировку
+        ship.totalTowCost = (ship.totalTowCost || 0) + towCost;
 
         // Перемещаем судно во Владивосток
         ship.currentPortId = vladivostokPort.id;

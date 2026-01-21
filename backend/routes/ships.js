@@ -128,7 +128,8 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
             maxFuel: gameConfig.initial.shipMaxFuel,
             health: gameConfig.initial.shipHealth,
             maxHealth: gameConfig.initial.shipMaxHealth,
-            crewLevel: gameConfig.initial.shipCrewLevel
+            crewLevel: gameConfig.initial.shipCrewLevel,
+            purchasePrice: price
         });
         
         // Списываем монеты
