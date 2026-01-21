@@ -93,6 +93,18 @@ class Port {
             return 1000;
         }
 
+        // Специальный балансный случай: расстояние между Новороссийском и Санкт-Петербургом
+        // фиксируем в 1959 миль (в обе стороны), независимо от координат.
+        const name1 = port1.name;
+        const name2 = port2.name;
+        const isNovoSpbPair =
+            (name1 === 'Порт Новороссийск' && name2 === 'Порт Санкт-Петербург') ||
+            (name1 === 'Порт Санкт-Петербург' && name2 === 'Порт Новороссийск');
+
+        if (isNovoSpbPair) {
+            return 1959;
+        }
+
         const R = 3440; // Радиус Земли в морских милях
         const lat1 = port1.location.lat * Math.PI / 180;
         const lat2 = port2.location.lat * Math.PI / 180;
