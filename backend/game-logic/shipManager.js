@@ -51,7 +51,9 @@ async function sendShipToPort(shipId, portId) {
     fuelCost = Math.round(fuelCost);
     
     // Обновляем статистику по судну: расстояние и количество рейсов
-    ship.totalDistanceNm = (ship.totalDistanceNm || 0) + distance;
+    // В БД поле total_distance_nm = BIGINT, поэтому сохраняем ОКРУГЛЁННОЕ значение (целое число миль)
+    const distanceInt = Math.round(distance);
+    ship.totalDistanceNm = (ship.totalDistanceNm || 0) + distanceInt;
     ship.totalTrips = (ship.totalTrips || 0) + 1;
 
     if (ship.fuel < fuelCost) {
