@@ -245,7 +245,7 @@ router.get('/:shipId/check-travel', validateUUID('shipId'), asyncHandler(async (
     res.json(result);
 }));
 
-// Отбуксировать судно во Владивосток (когда закончилось топливо)
+// Отбуксировать судно в порт "Нефтяной завод" (когда закончилось топливо)
 router.post('/:shipId/tow', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     

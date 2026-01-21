@@ -60,7 +60,16 @@ app.get('/health', (req, res) => {
 });
 
 // Инициализация базы данных
-initDatabase();
+try {
+    initDatabase();
+} catch (error) {
+    console.error('❌ Критическая ошибка инициализации базы данных:', error);
+    // В продакшене продолжаем работу, возможно переменные окружения установятся позже
+    if (process.env.NODE_ENV === 'development') {
+        console.error('Завершаем процесс в режиме разработки');
+        process.exit(1);
+    }
+}
 
 // Применяем аутентификацию Telegram (можно отключить через DISABLE_TELEGRAM_AUTH=true)
 app.use('/api/', telegramAuthMiddleware);
