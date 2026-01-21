@@ -10,83 +10,107 @@ const portManager = require('./portManager');
  * Теперь использует проверку по времени вместо setTimeout
  */
 async function sendShipToPort(shipId, portId) {
-    const ship = await Ship.findById(shipId);
-    if (!ship) {
-        return { success: false, error: 'Судно не найдено' };
+    try {
+        const ship = await Ship.findById(shipId);
+        if (!ship) {
+            console.error(`[sendShipToPort] Судно не найдено: ${shipId}`);
+            return { success: false, error: 'Судно не найдено' };
+        }
+
+        if (ship.isTraveling) {
+            console.error(`[sendShipToPort] Судно уже в пути: ${shipId}`);
+            return { success: false, error: 'Судно уже в пути' };
+        }
+
+        const destinationPort = await Port.findById(portId);
+        if (!destinationPort) {
+            console.error(`[sendShipToPort] Порт назначения не найден: ${portId}`);
+            return { success: false, error: 'Порт назначения не найден' };
+        }
+
+        const currentPort = await Port.findById(ship.currentPortId);
+        if (!currentPort) {
+            console.error(`[sendShipToPort] Текущий порт не найден: ${ship.currentPortId} для судна ${shipId}`);
+            return { success: false, error: `Текущий порт не найден (ID: ${ship.currentPortId})` };
+        }
+
+        if (ship.currentPortId === portId) {
+            console.error(`[sendShipToPort] Судно уже в этом порту: ${shipId} в порту ${portId}`);
+            return { success: false, error: 'Судно уже в этом порту' };
+        }
+
+        console.log(`[sendShipToPort] Отправка судна ${shipId} из порта "${currentPort.name}" (${ship.currentPortId}) в порт "${destinationPort.name}" (${portId})`);
+    } catch (error) {
+        console.error(`[sendShipToPort] Ошибка при проверке параметров:`, error);
+        return { success: false, error: `Ошибка при проверке параметров: ${error.message}` };
     }
 
-    if (ship.isTraveling) {
-        return { success: false, error: 'Судно уже в пути' };
-    }
+    try {
+        // Рассчитываем расстояние между портами
+        const distance = Port.calculateDistance(currentPort, destinationPort);
+        console.log(`[sendShipToPort] Расстояние: ${distance} миль`);
+        
+        // Рассчитываем расход топлива на основе расстояния
+        const fuelConsumptionRate = gameConfig.fuelCost.consumptionPerMile[ship.type] || 0.12;
+        let fuelCost = Math.max(
+            distance * fuelConsumptionRate,
+            gameConfig.fuelCost.minFuelPerTravel
+        );
+        
+        // Если судно перевозит груз, расход немного увеличивается
+        if (ship.cargo) {
+            fuelCost = fuelCost * 1.05; // +5% к расходу с грузом (чуть мягче, чтобы полный круг был реалистичен)
+            console.log(`[sendShipToPort] Судно перевозит груз, расход увеличен на 5%`);
+        }
+        
+        fuelCost = Math.round(fuelCost);
+        console.log(`[sendShipToPort] Расход топлива: ${fuelCost}, доступно: ${ship.fuel}`);
+        
+        // Обновляем статистику по судну: расстояние и количество рейсов
+        // В БД поле total_distance_nm = BIGINT, поэтому сохраняем ОКРУГЛЁННОЕ значение (целое число миль)
+        const distanceInt = Math.round(distance);
+        ship.totalDistanceNm = (ship.totalDistanceNm || 0) + distanceInt;
+        ship.totalTrips = (ship.totalTrips || 0) + 1;
 
-    const destinationPort = await Port.findById(portId);
-    if (!destinationPort) {
-        return { success: false, error: 'Порт назначения не найден' };
-    }
+        if (ship.fuel < fuelCost) {
+            console.error(`[sendShipToPort] Недостаточно топлива: требуется ${fuelCost}, доступно ${ship.fuel}`);
+            return { success: false, error: `Недостаточно топлива. Требуется: ${fuelCost}, доступно: ${ship.fuel}` };
+        }
 
-    const currentPort = await Port.findById(ship.currentPortId);
-    if (!currentPort) {
-        return { success: false, error: 'Текущий порт не найден' };
+        // ВРЕМЕННО ДЛЯ ТЕСТОВ: фиксированное время рейса 30 секунд
+        // TODO: ВЕРНУТЬ РЕАЛИСТИЧНОЕ ВРЕМЯ В БУДУЩЕМ
+        const travelTime = 30000; // 30 секунд для всех рейсов
+        
+        // РЕАЛИСТИЧНЫЙ РАСЧЕТ (закомментирован для тестов):
+        // const shipSpeed = gameConfig.shipSpeed[ship.type] || 18; // Морские мили в час
+        // const travelTimeHours = distance / shipSpeed;
+        // const travelTime = Math.max(
+        //     travelTimeHours * 60 * 1000, // 1 час = 1 минута реального времени
+        //     gameConfig.travelTime.default // Минимум 30 секунд
+        // );
+        const travelEndTime = new Date(Date.now() + travelTime);
+        
+        ship.fuel -= fuelCost;
+        console.log(`[sendShipToPort] Топливо после списания: ${ship.fuel}`);
+        
+        await ship.startTravel(portId, travelTime);
+        console.log(`[sendShipToPort] Судно успешно отправлено в путь`);
+        
+        // Не используем setTimeout - путешествие будет завершено при следующей проверке
+        // через endpoint /api/ships/check-travels или при любом запросе к судну
+        
+        return { 
+            success: true, 
+            ship, 
+            travelTime,
+            travelEndTime: travelEndTime.toISOString(),
+            distance,
+            fuelCost
+        };
+    } catch (error) {
+        console.error(`[sendShipToPort] Ошибка при отправке судна:`, error);
+        return { success: false, error: `Ошибка при отправке судна: ${error.message}` };
     }
-
-    if (ship.currentPortId === portId) {
-        return { success: false, error: 'Судно уже в этом порту' };
-    }
-
-    // Рассчитываем расстояние между портами
-    const distance = Port.calculateDistance(currentPort, destinationPort);
-    
-    // Рассчитываем расход топлива на основе расстояния
-    const fuelConsumptionRate = gameConfig.fuelCost.consumptionPerMile[ship.type] || 0.12;
-    let fuelCost = Math.max(
-        distance * fuelConsumptionRate,
-        gameConfig.fuelCost.minFuelPerTravel
-    );
-    
-    // Если судно перевозит груз, расход немного увеличивается
-    if (ship.cargo) {
-        fuelCost = fuelCost * 1.05; // +5% к расходу с грузом (чуть мягче, чтобы полный круг был реалистичен)
-    }
-    
-    fuelCost = Math.round(fuelCost);
-    
-    // Обновляем статистику по судну: расстояние и количество рейсов
-    // В БД поле total_distance_nm = BIGINT, поэтому сохраняем ОКРУГЛЁННОЕ значение (целое число миль)
-    const distanceInt = Math.round(distance);
-    ship.totalDistanceNm = (ship.totalDistanceNm || 0) + distanceInt;
-    ship.totalTrips = (ship.totalTrips || 0) + 1;
-
-    if (ship.fuel < fuelCost) {
-        return { success: false, error: `Недостаточно топлива. Требуется: ${fuelCost}, доступно: ${ship.fuel}` };
-    }
-
-    // ВРЕМЕННО ДЛЯ ТЕСТОВ: фиксированное время рейса 30 секунд
-    // TODO: ВЕРНУТЬ РЕАЛИСТИЧНОЕ ВРЕМЯ В БУДУЩЕМ
-    const travelTime = 30000; // 30 секунд для всех рейсов
-    
-    // РЕАЛИСТИЧНЫЙ РАСЧЕТ (закомментирован для тестов):
-    // const shipSpeed = gameConfig.shipSpeed[ship.type] || 18; // Морские мили в час
-    // const travelTimeHours = distance / shipSpeed;
-    // const travelTime = Math.max(
-    //     travelTimeHours * 60 * 1000, // 1 час = 1 минута реального времени
-    //     gameConfig.travelTime.default // Минимум 30 секунд
-    // );
-    const travelEndTime = new Date(Date.now() + travelTime);
-    
-    ship.fuel -= fuelCost;
-    await ship.startTravel(portId, travelTime);
-    
-    // Не используем setTimeout - путешествие будет завершено при следующей проверке
-    // через endpoint /api/ships/check-travels или при любом запросе к судну
-    
-    return { 
-        success: true, 
-        ship, 
-        travelTime,
-        travelEndTime: travelEndTime.toISOString(),
-        distance,
-        fuelCost
-    };
 }
 
 /**
@@ -527,7 +551,7 @@ async function refuelShip(shipId, cargoType, amount) {
 }
 
 /**
- * Отбуксировать судно во Владивосток
+ * Отбуксировать судно в порт "Нефтяной завод"
  * Можно вызывать в любой момент, когда судно стоит в порту (не в пути)
  */
 async function towShip(shipId) {
@@ -540,19 +564,19 @@ async function towShip(shipId) {
         return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
     }
 
-    // Находим порт Владивосток
+    // Находим порт "Нефтяной завод" (где генерируется нефть)
     const allPorts = await Port.findAll();
-    const vladivostokPort = allPorts.find(port => port.name === 'Порт Владивосток');
+    const vladivostokPort = allPorts.find(port => port.name === 'Порт "Нефтяной завод"');
     
     if (!vladivostokPort) {
-        return { success: false, error: 'Порт Владивосток не найден' };
+        return { success: false, error: 'Порт "Нефтяной завод" не найден' };
     }
 
-    // Если судно уже во Владивостоке, буксировка не нужна
+    // Если судно уже в порту "Нефтяной завод", буксировка не нужна
     if (ship.currentPortId === vladivostokPort.id) {
         return { 
             success: false, 
-            error: 'Судно уже в порту Владивосток. Заправьте судно нефтью.' 
+            error: 'Судно уже в порту "Нефтяной завод". Заправьте судно нефтью.' 
         };
     }
 
@@ -590,7 +614,7 @@ async function towShip(shipId) {
         // Обновляем статистику по судну: затраты на буксировку
         ship.totalTowCost = (ship.totalTowCost || 0) + towCost;
 
-        // Перемещаем судно во Владивосток
+        // Перемещаем судно в порт "Нефтяной завод"
         ship.currentPortId = vladivostokPort.id;
         // Топливо остаётся 0 (игрок должен заправиться)
         await ship.save();
