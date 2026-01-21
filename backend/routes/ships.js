@@ -4,7 +4,7 @@ const Ship = require('../models/Ship');
 const User = require('../models/User');
 const Port = require('../models/Port');
 const gameConfig = require('../config/gameConfig');
-const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
+const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
 const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
 const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
 
@@ -224,6 +224,17 @@ router.post('/check-travels', asyncHandler(async (req, res) => {
 router.get('/:shipId/check-travel', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     const result = await checkShipTravel(shipId);
+    res.json(result);
+}));
+
+// Отбуксировать судно во Владивосток (когда закончилось топливо)
+router.post('/:shipId/tow', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    
+    // Проверяем завершенные путешествия перед буксировкой
+    await checkShipTravel(shipId);
+    
+    const result = await towShip(shipId);
     res.json(result);
 }));
 

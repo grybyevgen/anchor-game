@@ -504,12 +504,100 @@ async function refuelShip(shipId, cargoType, amount) {
     }
 }
 
+/**
+ * Отбуксировать судно во Владивосток (когда закончилось топливо)
+ * Буксировка возможна только если топливо = 0 или очень мало (< 5)
+ */
+async function towShip(shipId) {
+    const ship = await Ship.findById(shipId);
+    if (!ship) {
+        return { success: false, error: 'Судно не найдено' };
+    }
+
+    if (ship.isTraveling) {
+        return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
+    }
+
+    // Буксировка доступна только если топливо = 0 или очень мало (< 5)
+    if (ship.fuel >= 5) {
+        return { 
+            success: false, 
+            error: `Буксировка доступна только при топливе < 5 единиц. Текущее топливо: ${ship.fuel}` 
+        };
+    }
+
+    // Находим порт Владивосток
+    const allPorts = await Port.findAll();
+    const vladivostokPort = allPorts.find(port => port.name === 'Порт Владивосток');
+    
+    if (!vladivostokPort) {
+        return { success: false, error: 'Порт Владивосток не найден' };
+    }
+
+    // Если судно уже во Владивостоке, буксировка не нужна
+    if (ship.currentPortId === vladivostokPort.id) {
+        return { 
+            success: false, 
+            error: 'Судно уже в порту Владивосток. Заправьте судно нефтью.' 
+        };
+    }
+
+    // Получаем текущий порт для расчета расстояния
+    const currentPort = await Port.findById(ship.currentPortId);
+    if (!currentPort) {
+        return { success: false, error: 'Текущий порт не найден' };
+    }
+
+    // Рассчитываем расстояние и стоимость буксировки
+    const distance = Port.calculateDistance(currentPort, vladivostokPort);
+    const towCost = Math.round(
+        gameConfig.economy.towCost.base + 
+        (distance * gameConfig.economy.towCost.perMile)
+    );
+
+    // Получаем пользователя
+    const user = await User.findById(ship.userId);
+    if (!user) {
+        return { success: false, error: 'Пользователь не найден' };
+    }
+
+    // Проверяем баланс
+    if (user.coins < towCost) {
+        return { 
+            success: false, 
+            error: `Недостаточно монет для буксировки. Требуется: ${towCost}, доступно: ${user.coins}` 
+        };
+    }
+
+    try {
+        // Списываем деньги
+        await user.spendCoins(towCost);
+
+        // Перемещаем судно во Владивосток
+        ship.currentPortId = vladivostokPort.id;
+        // Топливо остаётся 0 (игрок должен заправиться)
+        await ship.save();
+
+        return { 
+            success: true, 
+            ship, 
+            cost: towCost,
+            distance: distance,
+            message: 'Судно отбуксировано в порт Владивосток. Заправьте судно нефтью для продолжения работы.'
+        };
+    } catch (error) {
+        console.error('Ошибка при буксировке судна:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     sendShipToPort,
     loadCargo,
     unloadCargo,
     repairShip,
     refuelShip,
+    towShip,
     checkAndCompleteTravels,
     checkShipTravel
 };
