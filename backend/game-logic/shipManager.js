@@ -223,9 +223,8 @@ async function loadCargo(shipId, cargoType, amount) {
         try {
             await user.spendCoins(cargoPrice);
             
-            // Обновляем статистику по судну: затраты на груз и перевезённый груз
+            // Обновляем статистику по судну: затраты на груз
             ship.totalCargoCost = (ship.totalCargoCost || 0) + cargoPrice;
-            ship.totalCargoMoved = (ship.totalCargoMoved || 0) + amount;
 
             // Загружаем груз на судно и сохраняем порт покупки и цену покупки за единицу
             ship.cargo = { 
