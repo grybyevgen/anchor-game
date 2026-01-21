@@ -505,8 +505,8 @@ async function refuelShip(shipId, cargoType, amount) {
 }
 
 /**
- * Отбуксировать судно во Владивосток (когда закончилось топливо)
- * Буксировка возможна только если топливо = 0 или очень мало (< 5)
+ * Отбуксировать судно во Владивосток
+ * Можно вызывать в любой момент, когда судно стоит в порту (не в пути)
  */
 async function towShip(shipId) {
     const ship = await Ship.findById(shipId);
@@ -516,14 +516,6 @@ async function towShip(shipId) {
 
     if (ship.isTraveling) {
         return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
-    }
-
-    // Буксировка доступна только если топливо = 0 или очень мало (< 5)
-    if (ship.fuel >= 5) {
-        return { 
-            success: false, 
-            error: `Буксировка доступна только при топливе < 5 единиц. Текущее топливо: ${ship.fuel}` 
-        };
     }
 
     // Находим порт Владивосток
