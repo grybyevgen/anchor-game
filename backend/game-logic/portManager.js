@@ -58,15 +58,15 @@ async function processCargoGeneration(port, unloadedCargoType, unloadedAmount) {
         return null;
     }
 
-    // Получаем текущие запасы требуемых ресурсов в порту
+    // Получаем текущие запасы требуемых ресурсов в порту.
+    // ВАЖНО: к этому моменту порт уже обновлён через addCargo при выгрузке,
+    // поэтому используем фактическое состояние порта и НЕ добавляем unloadedAmount повторно,
+    // иначе получим завышенный расчёт generationCount и ошибки "Недостаточно груза в порту".
     const requiredCargo = {};
     for (const [cargoType, amount] of Object.entries(rules.requires)) {
         const portCargo = port.getCargo(cargoType);
         requiredCargo[cargoType] = portCargo ? portCargo.amount : 0;
     }
-
-    // Добавляем только что выгруженный груз
-    requiredCargo[unloadedCargoType] = (requiredCargo[unloadedCargoType] || 0) + unloadedAmount;
 
     // Проверяем, достаточно ли ресурсов для генерации
     let canGenerate = true;
