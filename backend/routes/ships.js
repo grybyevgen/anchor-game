@@ -112,9 +112,9 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
     }
     
     // Получаем порты и определяем стартовый порт в зависимости от типа судна:
-    // - Танкер (нефть) → Порт Владивосток (генерирует нефть)
-    // - Грузовое (материалы) → Порт Санкт-Петербург (генерирует материалы)
-    // - Снабженец (провизия) → Порт Новороссийск (генерирует провизию)
+    // - Танкер (нефть) → Порт "Нефтяной завод" (генерирует нефть)
+    // - Грузовое (материалы) → Порт "Завод Материалов" (генерирует материалы)
+    // - Снабженец (провизия) → Порт "Провизионный завод" (генерирует провизию)
     const ports = await Port.findAll();
     if (ports.length === 0) {
         return res.status(500).json({ success: false, error: 'Порты не инициализированы' });
@@ -122,11 +122,11 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
 
     let startPort = null;
     if (type === 'tanker') {
-        startPort = ports.find(p => p.name === 'Порт Владивосток');
+        startPort = ports.find(p => p.name === 'Порт "Нефтяной завод"');
     } else if (type === 'cargo') {
-        startPort = ports.find(p => p.name === 'Порт Санкт-Петербург');
+        startPort = ports.find(p => p.name === 'Порт "Завод Материалов"');
     } else if (type === 'supply') {
-        startPort = ports.find(p => p.name === 'Порт Новороссийск');
+        startPort = ports.find(p => p.name === 'Порт "Провизионный завод"');
     }
 
     // Если по каким-то причинам нужный порт не найден — используем первый как запасной вариант

@@ -600,7 +600,7 @@ async function towShip(shipId) {
             ship, 
             cost: towCost,
             distance: distance,
-            message: 'Судно отбуксировано в порт Владивосток. Заправьте судно нефтью для продолжения работы.'
+            message: 'Судно отбуксировано в порт "Нефтяной завод". Заправьте судно нефтью для продолжения работы.'
         };
     } catch (error) {
         console.error('Ошибка при буксировке судна:', error);
