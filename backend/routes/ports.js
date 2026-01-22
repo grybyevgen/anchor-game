@@ -16,6 +16,52 @@ router.get('/generation-rules', asyncHandler(async (req, res) => {
     res.json({ success: true, rules: PORT_GENERATION_RULES });
 }));
 
+// Получить расстояние между портами
+router.get('/distance', asyncHandler(async (req, res) => {
+    const { from, to } = req.query;
+    
+    if (!from || !to) {
+        return res.status(400).json({ 
+            success: false,
+            error: 'Необходимо указать параметры from и to (названия портов)' 
+        });
+    }
+    
+    try {
+        // Находим порты по названиям
+        const ports = await Port.findAll();
+        const fromPort = ports.find(p => p.name === from);
+        const toPort = ports.find(p => p.name === to);
+        
+        if (!fromPort) {
+            return res.status(404).json({ 
+                success: false,
+                error: `Порт "${from}" не найден` 
+            });
+        }
+        
+        if (!toPort) {
+            return res.status(404).json({ 
+                success: false,
+                error: `Порт "${to}" не найден` 
+            });
+        }
+        
+        // Рассчитываем расстояние
+        const distance = Port.calculateDistance(fromPort, toPort);
+        
+        res.json({ 
+            success: true, 
+            distance: distance,
+            from: fromPort.name,
+            to: toPort.name
+        });
+    } catch (error) {
+        const handledError = handleSupabaseError(error);
+        throw handledError || error;
+    }
+}));
+
 // Получить порт по ID
 router.get('/:portId', validateUUID('portId'), asyncHandler(async (req, res) => {
     const { portId } = req.params;
