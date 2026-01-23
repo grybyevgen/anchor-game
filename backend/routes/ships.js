@@ -13,10 +13,12 @@ router.get('/user/:userId', asyncHandler(async (req, res) => {
     const { userId } = req.params;
     
     let user;
-    if (userId.match(/^[0-9]+$/)) {
-        user = await User.findOne({ telegramId: parseInt(userId) });
+    // Преобразуем userId в строку для проверки
+    const userIdStr = String(userId);
+    if (userIdStr.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userIdStr) });
     } else {
-        user = await User.findById(userId);
+        user = await User.findById(userIdStr);
     }
     
     if (!user) {
@@ -39,10 +41,12 @@ router.get('/price/:userId/:type', asyncHandler(async (req, res) => {
     
     // Находим пользователя
     let user;
-    if (userId.match(/^[0-9]+$/)) {
-        user = await User.findOne({ telegramId: parseInt(userId) });
+    // Преобразуем userId в строку для проверки
+    const userIdStr = String(userId);
+    if (userIdStr.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userIdStr) });
     } else {
-        user = await User.findById(userId);
+        user = await User.findById(userIdStr);
     }
     
     if (!user) {
@@ -79,10 +83,12 @@ router.post('/buy', validateBuyShip, asyncHandler(async (req, res) => {
     
     // Находим пользователя
     let user;
-    if (userId.match(/^[0-9]+$/)) {
-        user = await User.findOne({ telegramId: parseInt(userId) });
+    // Преобразуем userId в строку для проверки
+    const userIdStr = String(userId);
+    if (userIdStr.match(/^[0-9]+$/)) {
+        user = await User.findOne({ telegramId: parseInt(userIdStr) });
     } else {
-        user = await User.findById(userId);
+        user = await User.findById(userIdStr);
     }
     
     if (!user) {

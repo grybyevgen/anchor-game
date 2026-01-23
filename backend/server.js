@@ -118,12 +118,14 @@ app.get('/api/users/:userId', validateGetUser, asyncHandler(async (req, res) => 
     const { userId } = req.params;
     
     let user;
-    if (userId.match(/^[0-9]+$/)) {
+    // Преобразуем userId в строку для проверки
+    const userIdStr = String(userId);
+    if (userIdStr.match(/^[0-9]+$/)) {
         // Это telegramId (число)
-        user = await User.findOne({ telegramId: parseInt(userId) });
+        user = await User.findOne({ telegramId: parseInt(userIdStr) });
     } else {
         // Это UUID
-        user = await User.findById(userId);
+        user = await User.findById(userIdStr);
     }
     
     if (!user) {
