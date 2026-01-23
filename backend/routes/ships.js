@@ -201,7 +201,15 @@ router.post('/:shipId/unload', validateUUID('shipId'), asyncHandler(async (req, 
     const { destination } = req.body; // Всегда 'port' (рынок удален)
     
     // Проверяем завершенные путешествия перед выгрузкой
-    await checkShipTravel(shipId);
+    try {
+        await checkShipTravel(shipId);
+    } catch (error) {
+        // Игнорируем ошибки проверки путешествий - это не критично для выгрузки
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (!isConnectionError(error)) {
+            console.error('Ошибка при проверке путешествий перед выгрузкой:', error);
+        }
+    }
     
     const result = await unloadCargo(shipId, destination || 'port');
     res.json(result);
@@ -232,7 +240,15 @@ router.post('/:shipId/refuel', validateUUID('shipId'), asyncHandler(async (req, 
     }
     
     // Проверяем завершенные путешествия перед заправкой
-    await checkShipTravel(shipId);
+    try {
+        await checkShipTravel(shipId);
+    } catch (error) {
+        // Игнорируем ошибки проверки путешествий - это не критично для заправки
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (!isConnectionError(error)) {
+            console.error('Ошибка при проверке путешествий перед заправкой:', error);
+        }
+    }
     
     const result = await refuelShip(shipId, cargoType, amount);
     res.json(result);
@@ -255,11 +271,30 @@ router.get('/:shipId/check-travel', validateUUID('shipId'), asyncHandler(async (
 router.post('/:shipId/tow', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     
-    // Проверяем завершенные путешествия перед буксировкой
-    await checkShipTravel(shipId);
+    console.log(`[POST /ships/:shipId/tow] Запрос на буксировку судна: ${shipId}`);
     
-    const result = await towShip(shipId);
-    res.json(result);
+    // Проверяем завершенные путешествия перед буксировкой
+    // Игнорируем ошибки - это не критично для буксировки
+    try {
+        await checkShipTravel(shipId);
+    } catch (error) {
+        // Тихая обработка - не логируем временные ошибки подключения
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (!isConnectionError(error)) {
+            // Логируем только не-сетевые ошибки, и то не как критичные
+            console.warn('[POST /ships/:shipId/tow] Предупреждение при проверке путешествий (не критично):', error.message);
+        }
+        // Продолжаем выполнение - буксировка может быть выполнена даже если проверка не удалась
+    }
+    
+    try {
+        const result = await towShip(shipId);
+        console.log(`[POST /ships/:shipId/tow] Результат буксировки:`, result.success ? 'Успешно' : 'Ошибка');
+        res.json(result);
+    } catch (error) {
+        console.error(`[POST /ships/:shipId/tow] Исключение при буксировке:`, error);
+        throw error; // Пробрасываем для обработки в asyncHandler
+    }
 }));
 
 module.exports = router;

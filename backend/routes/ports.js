@@ -7,8 +7,24 @@ const { validateUUID } = require('../middleware/validation');
 
 // Получить все порты
 router.get('/', asyncHandler(async (req, res) => {
-    const ports = await Port.findAll();
-    res.json({ success: true, ports });
+    try {
+        const { withRetry } = require('../config/database');
+        const ports = await withRetry(async () => {
+            return await Port.findAll();
+        });
+        res.json({ success: true, ports });
+    } catch (error) {
+        // Обработка ошибок подключения к базе данных
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (isConnectionError(error)) {
+            return res.status(503).json({
+                success: false,
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.',
+                code: 'DATABASE_CONNECTION_ERROR'
+            });
+        }
+        throw error;
+    }
 }));
 
 // Получить правила генерации ресурсов для портов
@@ -18,7 +34,9 @@ router.get('/generation-rules', asyncHandler(async (req, res) => {
 
 // Получить расстояние между портами
 router.get('/distance', asyncHandler(async (req, res) => {
-    const { from, to } = req.query;
+    // Декодируем параметры из URL (они могут быть URL-encoded)
+    const from = req.query.from ? decodeURIComponent(String(req.query.from)) : null;
+    const to = req.query.to ? decodeURIComponent(String(req.query.to)) : null;
     
     if (!from || !to) {
         return res.status(400).json({ 
@@ -28,8 +46,27 @@ router.get('/distance', asyncHandler(async (req, res) => {
     }
     
     try {
-        // Находим порты по названиям
-        const ports = await Port.findAll();
+        // Находим порты по названиям с retry при ошибках подключения
+        const { withRetry } = require('../config/database');
+        let ports;
+        
+        try {
+            ports = await withRetry(async () => {
+                return await Port.findAll();
+            });
+        } catch (error) {
+            // Обработка ошибок подключения к базе данных
+            const { isConnectionError } = require('../middleware/errorHandler');
+            if (isConnectionError(error)) {
+                return res.status(503).json({
+                    success: false,
+                    error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.',
+                    code: 'DATABASE_CONNECTION_ERROR'
+                });
+            }
+            throw error;
+        }
+        
         const fromPort = ports.find(p => p.name === from);
         const toPort = ports.find(p => p.name === to);
         
@@ -65,16 +102,33 @@ router.get('/distance', asyncHandler(async (req, res) => {
 // Получить порт по ID
 router.get('/:portId', validateUUID('portId'), asyncHandler(async (req, res) => {
     const { portId } = req.params;
-    const port = await Port.findById(portId);
     
-    if (!port) {
-        return res.status(404).json({ 
-            success: false,
-            error: 'Порт не найден' 
+    try {
+        const { withRetry } = require('../config/database');
+        const port = await withRetry(async () => {
+            return await Port.findById(portId);
         });
+        
+        if (!port) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Порт не найден' 
+            });
+        }
+        
+        res.json({ success: true, port });
+    } catch (error) {
+        // Обработка ошибок подключения к базе данных
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (isConnectionError(error)) {
+            return res.status(503).json({
+                success: false,
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.',
+                code: 'DATABASE_CONNECTION_ERROR'
+            });
+        }
+        throw error;
     }
-    
-    res.json({ success: true, port });
 }));
 
 module.exports = router;

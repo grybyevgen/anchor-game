@@ -47,6 +47,9 @@ function validateTelegramWebApp(initData, botToken) {
     }
 }
 
+// Флаг для отслеживания, было ли уже выведено предупреждение
+let authWarningShown = false;
+
 /**
  * Middleware для проверки аутентификации Telegram
  * В режиме разработки можно отключить через переменную окружения
@@ -54,7 +57,11 @@ function validateTelegramWebApp(initData, botToken) {
 function telegramAuthMiddleware(req, res, next) {
     // В режиме разработки можно отключить проверку
     if (process.env.DISABLE_TELEGRAM_AUTH === 'true') {
-        console.warn('⚠️  ВНИМАНИЕ: Аутентификация Telegram отключена!');
+        // Выводим предупреждение только один раз при первом запросе
+        if (!authWarningShown) {
+            authWarningShown = true;
+            // Предупреждение уже выводится при старте сервера, поэтому здесь не нужно
+        }
         return next();
     }
 
@@ -77,10 +84,7 @@ function telegramAuthMiddleware(req, res, next) {
     if (!initData) {
         // Для внутренних API запросов можно использовать другой метод аутентификации
         // Пока разрешаем, но можно ужесточить
-        // Логируем только в режиме разработки
-        if (process.env.NODE_ENV !== 'production') {
-            console.warn('⚠️  initData не предоставлен');
-        }
+        // Не логируем, чтобы не засорять консоль
         return next();
     }
 

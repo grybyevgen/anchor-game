@@ -125,13 +125,48 @@ async function checkAndCompleteTravels() {
         const now = new Date().toISOString();
         
         // Находим все судна, которые должны были прибыть
-        const { data: travelingShips, error } = await supabase
-            .from('ships')
-            .select('*')
-            .eq('is_traveling', true)
-            .lte('travel_end_time', now);
+        let travelingShips;
+        let error;
+        
+        try {
+            const result = await supabase
+                .from('ships')
+                .select('*')
+                .eq('is_traveling', true)
+                .lte('travel_end_time', now);
+            
+            travelingShips = result.data;
+            error = result.error;
+        } catch (fetchError) {
+            // Обработка ошибок подключения к Supabase (ECONNRESET, fetch failed и т.д.)
+            const isConnectionError = fetchError.message?.includes('fetch failed') || 
+                                     fetchError.message?.includes('ECONNRESET') ||
+                                     fetchError.message?.includes('ECONNREFUSED') ||
+                                     fetchError.code === 'ECONNRESET' ||
+                                     fetchError.code === 'ECONNREFUSED';
+            
+            if (isConnectionError) {
+                // Тихая обработка ошибок подключения - не логируем как критическую ошибку
+                // Это временные проблемы с сетью, которые могут быть нормальными
+                return { completed: 0, error: 'Временная ошибка подключения к базе данных', silent: true };
+            }
+            
+            // Для других ошибок логируем как обычно
+            console.error('Ошибка при запросе к Supabase:', fetchError);
+            return { completed: 0, error: fetchError.message || 'Ошибка подключения к базе данных' };
+        }
         
         if (error) {
+            // Ошибка от Supabase API (не ошибка подключения)
+            const isConnectionError = error.message?.includes('fetch failed') || 
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.code === 'ECONNRESET';
+            
+            if (isConnectionError) {
+                // Тихая обработка ошибок подключения
+                return { completed: 0, error: 'Временная ошибка подключения к базе данных', silent: true };
+            }
+            
             console.error('Ошибка при проверке путешествий:', error);
             return { completed: 0, error: error.message };
         }
@@ -160,6 +195,18 @@ async function checkAndCompleteTravels() {
         
         return { completed, total: travelingShips?.length || 0 };
     } catch (error) {
+        // Обработка неожиданных ошибок
+        const isConnectionError = error.message?.includes('fetch failed') || 
+                                 error.message?.includes('ECONNRESET') ||
+                                 error.message?.includes('ECONNREFUSED') ||
+                                 error.code === 'ECONNRESET' ||
+                                 error.code === 'ECONNREFUSED';
+        
+        if (isConnectionError) {
+            // Тихая обработка ошибок подключения
+            return { completed: 0, error: 'Временная ошибка подключения к базе данных', silent: true };
+        }
+        
         console.error('Ошибка проверки путешествий:', error);
         return { completed: 0, error: error.message };
     }
@@ -295,7 +342,11 @@ async function unloadCargo(shipId, destination = 'port') {
 
     // Используем транзакцию для атомарности операций
     try {
-        const currentPort = await Port.findById(ship.currentPortId);
+        const { withRetry } = require('../config/database');
+        
+        const currentPort = await withRetry(async () => {
+            return await Port.findById(ship.currentPortId);
+        });
         
         // Проверяем, можно ли выгрузить этот груз в порт (требуется для генерации)
         if (!portManager.canUnloadCargo(currentPort.name, ship.cargo.type)) {
@@ -306,7 +357,9 @@ async function unloadCargo(shipId, destination = 'port') {
         }
         
         // Выгружаем груз в порт
-        await currentPort.addCargo(ship.cargo.type, ship.cargo.amount);
+        await withRetry(async () => {
+            return await currentPort.addCargo(ship.cargo.type, ship.cargo.amount);
+        });
         
         // Пытаемся запустить генерацию ресурсов
         const generationResult = await portManager.processCargoGeneration(
@@ -335,7 +388,9 @@ async function unloadCargo(shipId, destination = 'port') {
 
         // Учитываем бонус за расстояние между портом покупки и текущим портом (если возможно)
         if (ship.cargo.purchasePortId) {
-            const purchasePort = await Port.findById(ship.cargo.purchasePortId);
+            const purchasePort = await withRetry(async () => {
+                return await Port.findById(ship.cargo.purchasePortId);
+            });
             if (purchasePort) {
                 const distance = Port.calculateDistance(purchasePort, currentPort);
                 const distanceMultiplier = gameConfig.economy.distancePriceMultiplier || 0;
@@ -385,13 +440,18 @@ async function unloadCargo(shipId, destination = 'port') {
         // Если убыток: возвращаем только выручку (меньше затрат)
         const finalReward = totalPurchasePrice + netReward;
 
-        const user = await User.findById(ship.userId);
+        const user = await withRetry(async () => {
+            return await User.findById(ship.userId);
+        });
+        
         if (!user) {
             throw new Error('Пользователь не найден');
         }
 
         // Начисляем финальную сумму
-        await user.addCoins(finalReward);
+        await withRetry(async () => {
+            return await user.addCoins(finalReward);
+        });
 
         // Обновляем статистику по судну:
         // - прибыль (может быть отрицательной, если рейс в минус)
@@ -401,7 +461,9 @@ async function unloadCargo(shipId, destination = 'port') {
 
         // Очищаем груз ТОЛЬКО после всех операций и сохраняем судно со статистикой
         ship.cargo = null;
-        await ship.save();
+        await withRetry(async () => {
+            return await ship.save();
+        });
         
         return { 
             success: true, 
@@ -419,6 +481,22 @@ async function unloadCargo(shipId, destination = 'port') {
         };
     } catch (error) {
         console.error('Ошибка выгрузки груза:', error);
+        
+        // Проверяем, является ли это ошибкой подключения к базе данных
+        const isConnectionError = error.message?.includes('fetch failed') || 
+                                 error.message?.includes('ECONNRESET') ||
+                                 error.message?.includes('ECONNREFUSED') ||
+                                 error.message?.includes('terminated') ||
+                                 error.code === 'ECONNRESET' ||
+                                 error.code === 'ECONNREFUSED';
+        
+        if (isConnectionError) {
+            return { 
+                success: false, 
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.' 
+            };
+        }
+        
         // В случае ошибки состояние должно остаться согласованным
         throw error;
     }
@@ -467,78 +545,95 @@ async function repairShip(shipId) {
 }
 
 async function refuelShip(shipId, cargoType, amount) {
-    const ship = await Ship.findById(shipId);
-    if (!ship) {
-        return { success: false, error: 'Судно не найдено' };
-    }
-
-    if (ship.isTraveling) {
-        return { success: false, error: 'Судно в пути' };
-    }
-
-    // Проверяем, что заправляем нефтью
-    if (cargoType !== 'oil') {
-        return { success: false, error: 'Для заправки можно использовать только нефть' };
-    }
-
-    // Получаем порт и нефть в порту
-    const port = await Port.findById(ship.currentPortId);
-    if (!port) {
-        return { success: false, error: 'Порт не найден' };
-    }
-
-    // Проверяем, что порт генерирует нефть (бункеровка возможна только в портах, где генерируется нефть)
-    if (!portManager.canLoadCargo(port.name, 'oil')) {
-        return { 
-            success: false, 
-            error: `Бункеровка возможна только в портах, где генерируется нефть. Этот порт не производит нефть.` 
-        };
-    }
-
-    const cargo = port.getCargo('oil');
-    if (!cargo || cargo.amount < amount) {
-        return { success: false, error: `Недостаточно нефти в порту. Доступно: ${cargo?.amount || 0}` };
-    }
-
-    // Проверка количества
-    if (!amount || amount <= 0) {
-        return { success: false, error: 'Количество нефти должно быть больше 0' };
-    }
-
-    // Вычисляем сколько топлива можно заправить (не больше максимума)
-    const fuelNeeded = ship.maxFuel - ship.fuel;
-    if (fuelNeeded <= 0) {
-        return { success: false, error: 'Судно уже полностью заправлено' };
-    }
-
-    const actualAmount = Math.min(amount, fuelNeeded); // Реальное количество для заправки
-    
-    // Вычисляем стоимость (цена за единицу * количество)
-    const cargoPrice = (cargo.price || 0) * actualAmount;
-
-    // Получаем пользователя
-    const user = await User.findById(ship.userId);
-    if (!user) {
-        return { success: false, error: 'Пользователь не найден' };
-    }
-
-    if (user.coins < cargoPrice) {
-        return { success: false, error: 'Недостаточно монет' };
-    }
-
     try {
+        const { withRetry } = require('../config/database');
+        
+        const ship = await withRetry(async () => {
+            return await Ship.findById(shipId);
+        });
+        
+        if (!ship) {
+            return { success: false, error: 'Судно не найдено' };
+        }
+
+        if (ship.isTraveling) {
+            return { success: false, error: 'Судно в пути' };
+        }
+
+        // Проверяем, что заправляем нефтью
+        if (cargoType !== 'oil') {
+            return { success: false, error: 'Для заправки можно использовать только нефть' };
+        }
+
+        // Получаем порт и нефть в порту
+        const port = await withRetry(async () => {
+            return await Port.findById(ship.currentPortId);
+        });
+        
+        if (!port) {
+            return { success: false, error: 'Порт не найден' };
+        }
+
+        // Проверяем, что порт генерирует нефть (бункеровка возможна только в портах, где генерируется нефть)
+        if (!portManager.canLoadCargo(port.name, 'oil')) {
+            return { 
+                success: false, 
+                error: `Бункеровка возможна только в портах, где генерируется нефть. Этот порт не производит нефть.` 
+            };
+        }
+
+        const cargo = port.getCargo('oil');
+        if (!cargo || cargo.amount < amount) {
+            return { success: false, error: `Недостаточно нефти в порту. Доступно: ${cargo?.amount || 0}` };
+        }
+
+        // Проверка количества
+        if (!amount || amount <= 0) {
+            return { success: false, error: 'Количество нефти должно быть больше 0' };
+        }
+
+        // Вычисляем сколько топлива можно заправить (не больше максимума)
+        const fuelNeeded = ship.maxFuel - ship.fuel;
+        if (fuelNeeded <= 0) {
+            return { success: false, error: 'Судно уже полностью заправлено' };
+        }
+
+        const actualAmount = Math.min(amount, fuelNeeded); // Реальное количество для заправки
+        
+        // Вычисляем стоимость (цена за единицу * количество)
+        const cargoPrice = (cargo.price || 0) * actualAmount;
+
+        // Получаем пользователя
+        const user = await withRetry(async () => {
+            return await User.findById(ship.userId);
+        });
+        
+        if (!user) {
+            return { success: false, error: 'Пользователь не найден' };
+        }
+
+        if (user.coins < cargoPrice) {
+            return { success: false, error: 'Недостаточно монет' };
+        }
+
         // Списываем деньги
-        await user.spendCoins(cargoPrice);
+        await withRetry(async () => {
+            return await user.spendCoins(cargoPrice);
+        });
 
         // Обновляем статистику по судну: расходы на топливо
         ship.totalFuelCost = (ship.totalFuelCost || 0) + cargoPrice;
 
         // Заправляем судно
         ship.fuel = Math.min(ship.fuel + actualAmount, ship.maxFuel);
-        await ship.save();
+        await withRetry(async () => {
+            return await ship.save();
+        });
 
         // Удаляем нефть из порта
-        await port.removeCargo('oil', actualAmount);
+        await withRetry(async () => {
+            return await port.removeCargo('oil', actualAmount);
+        });
 
         return { 
             success: true, 
@@ -548,7 +643,28 @@ async function refuelShip(shipId, cargoType, amount) {
         };
     } catch (error) {
         console.error('Ошибка при заправке судна:', error);
-        throw error;
+        
+        // Обработка ошибок подключения к базе данных
+        const isConnectionError = error.message?.includes('fetch failed') || 
+                                 error.message?.includes('ECONNRESET') ||
+                                 error.message?.includes('ECONNREFUSED') ||
+                                 error.message?.includes('terminated') ||
+                                 error.message?.toLowerCase().includes('временная ошибка подключения') ||
+                                 error.message?.toLowerCase().includes('connection') ||
+                                 error.code === 'ECONNRESET' ||
+                                 error.code === 'ECONNREFUSED';
+        
+        if (isConnectionError) {
+            return { 
+                success: false, 
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.' 
+            };
+        }
+        
+        return { 
+            success: false, 
+            error: error.message || 'Ошибка при заправке судна' 
+        };
     }
 }
 
@@ -557,69 +673,121 @@ async function refuelShip(shipId, cargoType, amount) {
  * Можно вызывать в любой момент, когда судно стоит в порту (не в пути)
  */
 async function towShip(shipId) {
-    const ship = await Ship.findById(shipId);
-    if (!ship) {
-        return { success: false, error: 'Судно не найдено' };
-    }
-
-    if (ship.isTraveling) {
-        return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
-    }
-
-    // Находим порт "Нефтяной завод" (где генерируется нефть)
-    const allPorts = await Port.findAll();
-    const vladivostokPort = allPorts.find(port => port.name === 'Порт "Нефтяной завод"');
-    
-    if (!vladivostokPort) {
-        return { success: false, error: 'Порт "Нефтяной завод" не найден' };
-    }
-
-    // Если судно уже в порту "Нефтяной завод", буксировка не нужна
-    if (ship.currentPortId === vladivostokPort.id) {
-        return { 
-            success: false, 
-            error: 'Судно уже в порту "Нефтяной завод". Заправьте судно нефтью.' 
-        };
-    }
-
-    // Получаем текущий порт для расчета расстояния
-    const currentPort = await Port.findById(ship.currentPortId);
-    if (!currentPort) {
-        return { success: false, error: 'Текущий порт не найден' };
-    }
-
-    // Рассчитываем расстояние и стоимость буксировки
-    const distance = Port.calculateDistance(currentPort, vladivostokPort);
-    const towCost = Math.round(
-        gameConfig.economy.towCost.base + 
-        (distance * gameConfig.economy.towCost.perMile)
-    );
-
-    // Получаем пользователя
-    const user = await User.findById(ship.userId);
-    if (!user) {
-        return { success: false, error: 'Пользователь не найден' };
-    }
-
-    // Проверяем баланс
-    if (user.coins < towCost) {
-        return { 
-            success: false, 
-            error: `Недостаточно монет для буксировки. Требуется: ${towCost}, доступно: ${user.coins}` 
-        };
-    }
-
     try {
+        console.log(`[towShip] Начало буксировки судна: ${shipId}`);
+        const { withRetry } = require('../config/database');
+        
+        const ship = await withRetry(async () => {
+            return await Ship.findById(shipId);
+        });
+        
+        if (!ship) {
+            console.error(`[towShip] Судно не найдено: ${shipId}`);
+            return { success: false, error: 'Судно не найдено' };
+        }
+
+        console.log(`[towShip] Судно найдено: ${ship.name}, текущий порт: ${ship.currentPortId}, в пути: ${ship.isTraveling}`);
+
+        if (ship.isTraveling) {
+            console.error(`[towShip] Судно в пути: ${shipId}`);
+            return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
+        }
+
+        // Находим порт "Нефтяной завод" (где генерируется нефть)
+        const allPorts = await withRetry(async () => {
+            return await Port.findAll();
+        });
+        
+        console.log(`[towShip] Найдено портов: ${allPorts.length}`);
+        const portNames = allPorts.map(p => p.name);
+        console.log(`[towShip] Названия портов:`, portNames);
+        
+        const vladivostokPort = allPorts.find(port => port.name === 'Порт "Нефтяной завод"');
+        
+        if (!vladivostokPort) {
+            console.error(`[towShip] Порт "Нефтяной завод" не найден. Доступные порты:`, portNames);
+            return { 
+                success: false, 
+                error: `Порт "Нефтяной завод" не найден. Доступные порты: ${portNames.join(', ')}` 
+            };
+        }
+
+        console.log(`[towShip] Порт "Нефтяной завод" найден: ${vladivostokPort.id}`);
+
+        // Получаем текущий порт для расчета расстояния и проверки
+        const currentPort = await withRetry(async () => {
+            return await Port.findById(ship.currentPortId);
+        });
+        
+        if (!currentPort) {
+            console.error(`[towShip] Текущий порт не найден: ${ship.currentPortId}`);
+            return { success: false, error: 'Текущий порт не найден' };
+        }
+
+        console.log(`[towShip] Текущий порт: ${currentPort.name}`);
+
+        // Если судно уже в порту "Нефтяной завод", буксировка не нужна
+        // Проверяем по ID и по названию порта для надежности
+        const isAlreadyInOilPort = ship.currentPortId === vladivostokPort.id || 
+                                   currentPort.name?.includes('Нефтяной');
+        
+        if (isAlreadyInOilPort) {
+            console.log(`[towShip] Судно уже в порту "Нефтяной завод" (ID: ${ship.currentPortId}, название: ${currentPort.name})`);
+            return { 
+                success: false, 
+                error: 'Судно уже в порту "Нефтяной завод". Заправьте судно нефтью.' 
+            };
+        }
+
+        // Рассчитываем расстояние и стоимость буксировки
+        const distance = Port.calculateDistance(currentPort, vladivostokPort);
+        const towCost = Math.round(
+            gameConfig.economy.towCost.base + 
+            (distance * gameConfig.economy.towCost.perMile)
+        );
+
+        console.log(`[towShip] Расстояние: ${distance} миль, стоимость буксировки: ${towCost}`);
+
+        // Получаем пользователя
+        const user = await withRetry(async () => {
+            return await User.findById(ship.userId);
+        });
+        
+        if (!user) {
+            console.error(`[towShip] Пользователь не найден: ${ship.userId}`);
+            return { success: false, error: 'Пользователь не найден' };
+        }
+
+        console.log(`[towShip] Пользователь найден, баланс: ${user.coins}, требуется: ${towCost}`);
+
+        // Проверяем баланс
+        if (user.coins < towCost) {
+            console.error(`[towShip] Недостаточно монет: требуется ${towCost}, доступно ${user.coins}`);
+            return { 
+                success: false, 
+                error: `Недостаточно монет для буксировки. Требуется: ${towCost}, доступно: ${user.coins}` 
+            };
+        }
+
         // Списываем деньги
-        await user.spendCoins(towCost);
+        console.log(`[towShip] Списываем монеты: ${towCost}`);
+        await withRetry(async () => {
+            return await user.spendCoins(towCost);
+        });
 
         // Обновляем статистику по судну: затраты на буксировку
         ship.totalTowCost = (ship.totalTowCost || 0) + towCost;
 
         // Перемещаем судно в порт "Нефтяной завод"
+        const oldPortId = ship.currentPortId;
         ship.currentPortId = vladivostokPort.id;
         // Топливо остаётся 0 (игрок должен заправиться)
-        await ship.save();
+        console.log(`[towShip] Перемещаем судно из порта ${oldPortId} в порт ${vladivostokPort.id}`);
+        await withRetry(async () => {
+            return await ship.save();
+        });
+
+        console.log(`[towShip] Буксировка успешно завершена`);
 
         return { 
             success: true, 
@@ -629,8 +797,23 @@ async function towShip(shipId) {
             message: 'Судно отбуксировано в порт "Нефтяной завод". Заправьте судно нефтью для продолжения работы.'
         };
     } catch (error) {
-        console.error('Ошибка при буксировке судна:', error);
-        throw error;
+        console.error('[towShip] Ошибка при буксировке судна:', error);
+        console.error('[towShip] Stack trace:', error.stack);
+        
+        // Обработка ошибок подключения к базе данных
+        const { isConnectionError } = require('../middleware/errorHandler');
+        
+        if (isConnectionError(error)) {
+            return { 
+                success: false, 
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.' 
+            };
+        }
+        
+        return { 
+            success: false, 
+            error: error.message || 'Ошибка при буксировке судна' 
+        };
     }
 }
 

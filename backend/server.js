@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
@@ -19,10 +18,10 @@ const PORT = process.env.PORT || 3000;
 // 1 означает доверять только одному прокси перед приложением
 app.set('trust proxy', 1);
 
-// Rate limiting
+// Rate limiting - более мягкий для тестового режима
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
-    max: 300, // максимум 300 запросов с одного IP (увеличено для комфортной работы)
+    max: process.env.NODE_ENV === 'production' ? 300 : 1000, // В тестовом режиме больше лимит
     message: {
         success: false,
         error: 'Слишком много запросов, попробуйте позже'
@@ -32,7 +31,9 @@ const limiter = rateLimit({
     // Отключаем валидацию trust proxy для работы за прокси
     validate: {
         trustProxy: false
-    }
+    },
+    // Пропускаем rate limiting для health check
+    skip: (req) => req.path === '/health'
 });
 
 // Middleware
@@ -48,7 +49,25 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Применяем rate limiting ко всем запросам
+// Более мягкий лимит для check-travel (применяется ПЕРЕД общим лимитером)
+const checkTravelLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 минута
+    max: 30, // максимум 30 запросов в минуту для check-travel (увеличено с 20)
+    message: {
+        success: false,
+        error: 'Слишком много запросов проверки путешествий, попробуйте позже'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: {
+        trustProxy: false
+    }
+});
+
+// Применяем более мягкий лимит для check-travel ПЕРЕД общим лимитером
+app.use('/api/ships/:shipId/check-travel', checkTravelLimiter);
+
+// Применяем rate limiting ко всем остальным запросам
 app.use('/api/', limiter);
 
 // Health check endpoint (без rate limiting и аутентификации)
@@ -118,14 +137,28 @@ app.get('/api/users/:userId', validateGetUser, asyncHandler(async (req, res) => 
     const { userId } = req.params;
     
     let user;
-    // Преобразуем userId в строку для проверки
-    const userIdStr = String(userId);
-    if (userIdStr.match(/^[0-9]+$/)) {
-        // Это telegramId (число)
-        user = await User.findOne({ telegramId: parseInt(userIdStr) });
-    } else {
-        // Это UUID
-        user = await User.findById(userIdStr);
+    try {
+        // Преобразуем userId в строку для проверки
+        const userIdStr = String(userId);
+        if (userIdStr.match(/^[0-9]+$/)) {
+            // Это telegramId (число)
+            user = await User.findOne({ telegramId: parseInt(userIdStr) });
+        } else {
+            // Это UUID
+            user = await User.findById(userIdStr);
+        }
+    } catch (error) {
+        // Обработка ошибок подключения к базе данных
+        const { isConnectionError } = require('./middleware/errorHandler');
+        if (isConnectionError(error)) {
+            // Возвращаем 503 для временных ошибок подключения
+            return res.status(503).json({
+                success: false,
+                error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.',
+                code: 'DATABASE_CONNECTION_ERROR'
+            });
+        }
+        throw error;
     }
     
     if (!user) {
@@ -136,12 +169,39 @@ app.get('/api/users/:userId', validateGetUser, asyncHandler(async (req, res) => 
     }
     
     // Проверяем завершенные путешествия перед загрузкой судов
-    const { checkAndCompleteTravels } = require('./game-logic/shipManager');
-    await checkAndCompleteTravels();
+    try {
+        const { checkAndCompleteTravels } = require('./game-logic/shipManager');
+        await checkAndCompleteTravels();
+    } catch (error) {
+        // Игнорируем ошибки проверки путешествий - это не критично для получения данных пользователя
+        const { isConnectionError } = require('./middleware/errorHandler');
+        if (!isConnectionError(error)) {
+            console.error('Ошибка при проверке путешествий:', error);
+        }
+    }
     
     // Загружаем судна пользователя
     const Ship = require('./models/Ship');
-    const ships = await Ship.find({ userId: user.id });
+    let ships = [];
+    try {
+        ships = await Ship.find({ userId: user.id });
+    } catch (error) {
+        // Обработка ошибок подключения при загрузке судов
+        const { isConnectionError } = require('./middleware/errorHandler');
+        if (isConnectionError(error)) {
+            // Возвращаем данные пользователя, но без судов
+            return res.json({
+                success: true,
+                userId: user.id,
+                telegramId: user.telegramId,
+                username: user.username,
+                coins: user.coins,
+                ships: [],
+                warning: 'Не удалось загрузить данные о судах из-за временной ошибки подключения'
+            });
+        }
+        throw error;
+    }
     
     res.json({
         success: true,
@@ -171,17 +231,48 @@ app.listen(PORT, () => {
     }
     
     // Запускаем периодическую проверку завершенных путешествий
-    const { checkAndCompleteTravels } = require('./game-logic/shipManager');
-    setInterval(async () => {
-        try {
-            const result = await checkAndCompleteTravels();
-            if (result.completed > 0) {
-                console.log(`✅ Завершено путешествий: ${result.completed}`);
+    // Можно отключить через DISABLE_TRAVEL_CHECK=true для локального тестирования
+    if (process.env.DISABLE_TRAVEL_CHECK !== 'true') {
+        const { checkAndCompleteTravels } = require('./game-logic/shipManager');
+        let lastErrorTime = 0;
+        const ERROR_LOG_INTERVAL = 60000; // Логируем ошибки не чаще раза в минуту
+        
+        setInterval(async () => {
+            try {
+                const result = await checkAndCompleteTravels();
+                if (result.completed > 0) {
+                    console.log(`✅ Завершено путешествий: ${result.completed}`);
+                }
+                // Логируем ошибки только если они не silent и не слишком часто
+                if (result.error && !result.silent) {
+                    const now = Date.now();
+                    if (now - lastErrorTime > ERROR_LOG_INTERVAL) {
+                        console.error('Ошибка при проверке путешествий:', result.error);
+                        lastErrorTime = now;
+                    }
+                }
+            } catch (error) {
+                // Обработка неожиданных ошибок
+                const isConnectionError = error.message?.includes('fetch failed') || 
+                                         error.message?.includes('ECONNRESET') ||
+                                         error.message?.includes('ECONNREFUSED') ||
+                                         error.code === 'ECONNRESET' ||
+                                         error.code === 'ECONNREFUSED';
+                
+                if (!isConnectionError) {
+                    // Логируем только не-сетевые ошибки и не чаще раза в минуту
+                    const now = Date.now();
+                    if (now - lastErrorTime > ERROR_LOG_INTERVAL) {
+                        console.error('Ошибка при проверке путешествий:', error.message || error);
+                        lastErrorTime = now;
+                    }
+                }
+                // Сетевые ошибки игнорируем - это временные проблемы
             }
-        } catch (error) {
-            console.error('Ошибка при проверке путешествий:', error);
-        }
-    }, 60000); // Проверяем каждую минуту
+        }, 60000); // Проверяем каждую минуту
+    } else {
+        console.log('ℹ️  Периодическая проверка путешествий отключена (DISABLE_TRAVEL_CHECK=true)');
+    }
 });
 
 module.exports = app;

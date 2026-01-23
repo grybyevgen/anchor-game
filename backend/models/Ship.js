@@ -38,61 +38,146 @@ class Ship {
 
     static async find(query) {
         const supabase = getSupabase();
-        let queryBuilder = supabase.from('ships').select('*');
         
-        if (query.userId) {
-            queryBuilder = queryBuilder.eq('user_id', query.userId);
+        try {
+            let queryBuilder = supabase.from('ships').select('*');
+            
+            if (query.userId) {
+                queryBuilder = queryBuilder.eq('user_id', query.userId);
+            }
+            
+            const { data, error } = await queryBuilder;
+            if (error) {
+                // Обработка ошибок подключения
+                const isConnectionError = error.message?.includes('fetch failed') || 
+                                         error.message?.includes('ECONNRESET') ||
+                                         error.message?.includes('ECONNREFUSED') ||
+                                         error.message?.includes('terminated') ||
+                                         error.code === 'ECONNRESET' ||
+                                         error.code === 'ECONNREFUSED';
+                
+                if (isConnectionError) {
+                    throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+                }
+                throw error;
+            }
+            
+            return data.map(ship => new Ship(ship));
+        } catch (error) {
+            // Обработка ошибок подключения на уровне catch
+            const isConnectionError = error.message?.includes('fetch failed') || 
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
         }
-        
-        const { data, error } = await queryBuilder;
-        if (error) throw error;
-        
-        return data.map(ship => new Ship(ship));
     }
 
     static async findById(id) {
         const supabase = getSupabase();
         
-        const { data, error } = await supabase
-            .from('ships')
-            .select('*')
-            .eq('id', id)
-            .single();
-        
-        if (error && error.code !== 'PGRST116') throw error;
-        return data ? new Ship(data) : null;
+        try {
+            const { data, error } = await supabase
+                .from('ships')
+                .select('*')
+                .eq('id', id)
+                .single();
+            
+            if (error && error.code !== 'PGRST116') {
+                // Обработка ошибок подключения
+                const isConnectionError = error.message?.includes('fetch failed') || 
+                                         error.message?.includes('ECONNRESET') ||
+                                         error.message?.includes('ECONNREFUSED') ||
+                                         error.message?.includes('terminated') ||
+                                         error.code === 'ECONNRESET' ||
+                                         error.code === 'ECONNREFUSED';
+                
+                if (isConnectionError) {
+                    throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+                }
+                throw error;
+            }
+            return data ? new Ship(data) : null;
+        } catch (error) {
+            // Обработка ошибок подключения на уровне catch
+            const isConnectionError = error.message?.includes('fetch failed') || 
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
     }
 
     static async create(shipData) {
         const supabase = getSupabase();
         
-        const { data, error } = await supabase
-            .from('ships')
-            .insert({
-                user_id: shipData.userId,
-                type: shipData.type,
-                name: shipData.name,
-                current_port_id: shipData.currentPortId,
-                fuel: shipData.fuel || 100,
-                max_fuel: shipData.maxFuel || 100,
-                health: shipData.health || 100,
-                max_health: shipData.maxHealth || 100,
-                crew_level: shipData.crewLevel || 1,
-                purchase_price: shipData.purchasePrice || 0,
-                total_distance_nm: 0,
-                total_trips: 0,
-                total_cargo_moved: 0,
-                total_profit: 0,
-                total_fuel_cost: 0,
-                total_cargo_cost: 0,
-                total_repair_cost: 0,
-                total_tow_cost: 0
-            })
-            .select()
-            .single();
-        
-        if (error) throw error;
-        return new Ship(data);
+        try {
+            const { data, error } = await supabase
+                .from('ships')
+                .insert({
+                    user_id: shipData.userId,
+                    type: shipData.type,
+                    name: shipData.name,
+                    current_port_id: shipData.currentPortId,
+                    fuel: shipData.fuel || 100,
+                    max_fuel: shipData.maxFuel || 100,
+                    health: shipData.health || 100,
+                    max_health: shipData.maxHealth || 100,
+                    crew_level: shipData.crewLevel || 1,
+                    purchase_price: shipData.purchasePrice || 0,
+                    total_distance_nm: 0,
+                    total_trips: 0,
+                    total_cargo_moved: 0,
+                    total_profit: 0,
+                    total_fuel_cost: 0,
+                    total_cargo_cost: 0,
+                    total_repair_cost: 0,
+                    total_tow_cost: 0
+                })
+                .select()
+                .single();
+            
+            if (error) {
+                // Обработка ошибок подключения
+                const isConnectionError = error.message?.includes('fetch failed') || 
+                                         error.message?.includes('ECONNRESET') ||
+                                         error.message?.includes('ECONNREFUSED') ||
+                                         error.message?.includes('terminated') ||
+                                         error.code === 'ECONNRESET' ||
+                                         error.code === 'ECONNREFUSED';
+                
+                if (isConnectionError) {
+                    throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+                }
+                throw error;
+            }
+            return new Ship(data);
+        } catch (error) {
+            // Обработка ошибок подключения на уровне catch
+            const isConnectionError = error.message?.includes('fetch failed') || 
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
     }
 
     async save() {
@@ -125,16 +210,44 @@ class Ship {
             total_tow_cost: this.totalTowCost ?? 0
         };
         
-        const { data, error } = await supabase
-            .from('ships')
-            .update(updateData)
-            .eq('id', this.id)
-            .select()
-            .single();
-        
-        if (error) throw error;
-        Object.assign(this, new Ship(data));
-        return this;
+        try {
+            const { data, error } = await supabase
+                .from('ships')
+                .update(updateData)
+                .eq('id', this.id)
+                .select()
+                .single();
+            
+            if (error) {
+                // Обработка ошибок подключения
+                const isConnectionError = error.message?.includes('fetch failed') || 
+                                         error.message?.includes('ECONNRESET') ||
+                                         error.message?.includes('ECONNREFUSED') ||
+                                         error.message?.includes('terminated') ||
+                                         error.code === 'ECONNRESET' ||
+                                         error.code === 'ECONNREFUSED';
+                
+                if (isConnectionError) {
+                    throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+                }
+                throw error;
+            }
+            Object.assign(this, new Ship(data));
+            return this;
+        } catch (error) {
+            // Обработка ошибок подключения на уровне catch
+            const isConnectionError = error.message?.includes('fetch failed') || 
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
     }
 
     canLoadCargo(cargoType) {

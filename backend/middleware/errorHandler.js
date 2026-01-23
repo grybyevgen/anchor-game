@@ -16,8 +16,12 @@ class AppError extends Error {
  * Создание стандартизированного ответа об ошибке
  */
 function createErrorResponse(error, req) {
-    const statusCode = error.statusCode || 500;
-    const code = error.code || 'INTERNAL_ERROR';
+    // Проверяем, является ли это ошибкой подключения к базе данных
+    const isConnError = isConnectionError(error);
+    
+    // Если это ошибка подключения, устанавливаем статус 503
+    const statusCode = isConnError ? 503 : (error.statusCode || 500);
+    const code = isConnError ? 'DATABASE_CONNECTION_ERROR' : (error.code || 'INTERNAL_ERROR');
     
     const response = {
         success: false,
@@ -41,12 +45,17 @@ function createErrorResponse(error, req) {
 function errorHandler(err, req, res, next) {
     const { statusCode, response } = createErrorResponse(err, req);
     
-    // Логируем ошибку
-    console.error(`[${new Date().toISOString()}] Error ${statusCode} on ${req.method} ${req.path}:`, {
-        message: err.message,
-        code: response.code,
-        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
+    // Проверяем, является ли это ошибкой подключения к базе данных
+    const isConnError = isConnectionError(err);
+    
+    // Логируем ошибку (но не логируем временные ошибки подключения как критичные)
+    if (!isConnError || process.env.NODE_ENV === 'development') {
+        console.error(`[${new Date().toISOString()}] Error ${statusCode} on ${req.method} ${req.path}:`, {
+            message: err.message,
+            code: response.code,
+            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+        });
+    }
 
     res.status(statusCode).json(response);
 }
@@ -73,10 +82,39 @@ function asyncHandler(fn) {
 }
 
 /**
+ * Проверка, является ли ошибка временной ошибкой подключения
+ */
+function isConnectionError(error) {
+    if (!error) return false;
+    
+    const errorMessage = error.message?.toLowerCase() || '';
+    const errorCode = error.code || '';
+    
+    return errorMessage.includes('fetch failed') ||
+           errorMessage.includes('econnreset') ||
+           errorMessage.includes('econnrefused') ||
+           errorMessage.includes('terminated') ||
+           errorMessage.includes('connection') ||
+           errorCode === 'ECONNRESET' ||
+           errorCode === 'ECONNREFUSED' ||
+           errorCode === 'ETIMEDOUT';
+}
+
+/**
  * Валидация ошибок Supabase
  */
 function handleSupabaseError(error) {
     if (!error) return null;
+
+    // Проверяем, является ли это временной ошибкой подключения
+    if (isConnectionError(error)) {
+        // Для временных ошибок подключения возвращаем более понятное сообщение
+        return new AppError(
+            'Временная ошибка подключения к базе данных. Попробуйте еще раз.',
+            503, // Service Unavailable
+            'DATABASE_CONNECTION_ERROR'
+        );
+    }
 
     // Ошибки уникальности
     if (error.code === '23505') {
@@ -111,5 +149,6 @@ module.exports = {
     errorHandler,
     notFoundHandler,
     asyncHandler,
-    handleSupabaseError
+    handleSupabaseError,
+    isConnectionError
 };
