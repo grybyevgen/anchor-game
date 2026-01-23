@@ -48,8 +48,15 @@ function errorHandler(err, req, res, next) {
     // Проверяем, является ли это ошибкой подключения к базе данных
     const isConnError = isConnectionError(err);
     
-    // Логируем ошибку (но не логируем временные ошибки подключения как критичные)
-    if (!isConnError || process.env.NODE_ENV === 'development') {
+    // Не логируем 404 для статических ресурсов (favicon, robots.txt и т.д.)
+    const isStaticResource = req.path === '/favicon.ico' || 
+                             req.path === '/robots.txt' ||
+                             req.path.startsWith('/static/') ||
+                             req.path.startsWith('/assets/');
+    
+    // Логируем ошибку (но не логируем временные ошибки подключения и статические ресурсы как критичные)
+    if ((!isConnError || process.env.NODE_ENV === 'development') && 
+        !(statusCode === 404 && isStaticResource)) {
         console.error(`[${new Date().toISOString()}] Error ${statusCode} on ${req.method} ${req.path}:`, {
             message: err.message,
             code: response.code,
@@ -64,11 +71,24 @@ function errorHandler(err, req, res, next) {
  * Обработчик 404
  */
 function notFoundHandler(req, res, next) {
+    // Не логируем favicon.ico как ошибку - это нормальный запрос браузера
+    const isFavicon = req.path === '/favicon.ico';
+    
     const error = new AppError(
         `Маршрут ${req.method} ${req.path} не найден`,
         404,
         'NOT_FOUND'
     );
+    
+    // Для favicon просто возвращаем 404 без логирования
+    if (isFavicon) {
+        return res.status(404).json({
+            success: false,
+            error: 'Not found',
+            code: 'NOT_FOUND'
+        });
+    }
+    
     next(error);
 }
 

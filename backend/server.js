@@ -79,6 +79,38 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Корневой путь - информация об API
+app.get('/', (req, res) => {
+    res.json({
+        name: 'Anchor Game API',
+        version: '1.0.0',
+        status: 'running',
+        endpoints: {
+            health: '/health',
+            api: '/api',
+            ships: '/api/ships',
+            ports: '/api/ports',
+            market: '/api/market',
+            users: '/api/users'
+        }
+    });
+});
+
+// Информация об API эндпоинтах
+app.get('/api', (req, res) => {
+    res.json({
+        message: 'Anchor Game API',
+        version: '1.0.0',
+        endpoints: {
+            ships: '/api/ships',
+            ports: '/api/ports',
+            market: '/api/market',
+            users: '/api/users'
+        },
+        documentation: 'See /health for server status'
+    });
+});
+
 // Инициализация базы данных
 try {
     initDatabase();
