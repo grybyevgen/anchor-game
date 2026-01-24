@@ -7,6 +7,7 @@ const gameConfig = require('../config/gameConfig');
 const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, checkAndCompleteTravels, checkShipTravel } = require('../game-logic/shipManager');
 const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
 const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
+const { idempotency } = require('../middleware/idempotency');
 
 // Получить все судна пользователя
 router.get('/user/:userId', asyncHandler(async (req, res) => {
@@ -184,7 +185,7 @@ router.post('/:shipId/travel', validateTravel, asyncHandler(async (req, res) => 
 }));
 
 // Загрузить груз
-router.post('/:shipId/load', validateLoadCargo, asyncHandler(async (req, res) => {
+router.post('/:shipId/load', validateLoadCargo, idempotency({ ttlMs: 60_000 }), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     const { cargoType, amount } = req.body;
     
@@ -196,7 +197,7 @@ router.post('/:shipId/load', validateLoadCargo, asyncHandler(async (req, res) =>
 }));
 
 // Выгрузить груз
-router.post('/:shipId/unload', validateUUID('shipId'), asyncHandler(async (req, res) => {
+router.post('/:shipId/unload', validateUUID('shipId'), idempotency({ ttlMs: 60_000 }), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     const { destination } = req.body; // Всегда 'port' (рынок удален)
     
