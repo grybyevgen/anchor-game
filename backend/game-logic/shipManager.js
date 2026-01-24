@@ -387,15 +387,21 @@ async function unloadCargo(shipId, destination = 'port') {
         }
 
         // Учитываем бонус за расстояние между портом покупки и текущим портом (если возможно)
+        let distance = 0;
+        let distanceBonus = 0; // общий бонус (за весь объём груза)
+        let distanceBonusPerUnit = 0; // бонус за 1 единицу
         if (ship.cargo.purchasePortId) {
             const purchasePort = await withRetry(async () => {
                 return await Port.findById(ship.cargo.purchasePortId);
             });
             if (purchasePort) {
-                const distance = Port.calculateDistance(purchasePort, currentPort);
+                distance = Port.calculateDistance(purchasePort, currentPort);
                 const distanceMultiplier = gameConfig.economy.distancePriceMultiplier || 0;
                 // Бонус добавляем к цене за единицу
-                salePricePerUnit += Math.round(distance * distanceMultiplier);
+                distanceBonusPerUnit = Math.round(distance * distanceMultiplier);
+                salePricePerUnit += distanceBonusPerUnit;
+                // Общий бонус за дистанцию для всего груза
+                distanceBonus = distanceBonusPerUnit * ship.cargo.amount;
             }
         }
         
@@ -469,12 +475,16 @@ async function unloadCargo(shipId, destination = 'port') {
             success: true, 
             reward: finalReward,
             grossProfit: grossProfit,  // Прибыль до налогов (может быть отрицательной)
+            netProfit: netReward, // Чистая прибыль (после сборов/налога; может быть отрицательной)
             totalSalePrice: totalSalePrice,  // Общая сумма продажи
             totalPurchasePrice: totalPurchasePrice,  // Общая сумма покупки
             salePricePerUnit: salePricePerUnit,
             purchasePricePerUnit: purchasePricePerUnit,
             portFees,
             profitTax,
+            distanceBonus,  // Бонус за дистанцию
+            distanceBonusPerUnit, // Бонус за дистанцию за 1 единицу
+            distance,  // Расстояние в милях
             cargo: cargoData, 
             destination,
             generation: generationResult  // Информация о генерации ресурсов
