@@ -32,8 +32,9 @@ const limiter = rateLimit({
     validate: {
         trustProxy: false
     },
-    // Пропускаем rate limiting для health check
-    skip: (req) => req.path === '/health'
+    // Не лимитим preflight-запросы браузера (иначе они "съедают" лимит при CORS)
+    // + пропускаем health check
+    skip: (req) => req.method === 'OPTIONS' || req.path === '/health' || req.originalUrl === '/health'
 });
 
 // Middleware
@@ -61,7 +62,9 @@ const checkTravelLimiter = rateLimit({
     legacyHeaders: false,
     validate: {
         trustProxy: false
-    }
+    },
+    // Не лимитим preflight-запросы браузера
+    skip: (req) => req.method === 'OPTIONS'
 });
 
 // Применяем более мягкий лимит для check-travel ПЕРЕД общим лимитером
