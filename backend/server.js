@@ -11,6 +11,7 @@ const portRoutes = require('./routes/ports');
 const marketRoutes = require('./routes/market');
 const ratingRoutes = require('./routes/rating');
 const referralRoutes = require('./routes/referral');
+const telegramRoutes = require('./routes/telegram');
 const User = require('./models/User');
 
 const app = express();
@@ -127,6 +128,10 @@ try {
         process.exit(1);
     }
 }
+
+// Telegram webhook не требует аутентификации (имеет свою валидацию через секретный токен)
+// Должен быть ПЕРЕД применением telegramAuthMiddleware
+app.use('/api/telegram', telegramRoutes);
 
 // Применяем аутентификацию Telegram (можно отключить через DISABLE_TELEGRAM_AUTH=true)
 app.use('/api/', telegramAuthMiddleware);
