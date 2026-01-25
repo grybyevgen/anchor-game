@@ -53,7 +53,7 @@ app.use(express.urlencoded({ extended: true }));
 // Более мягкий лимит для check-travel (применяется ПЕРЕД общим лимитером)
 const checkTravelLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 минута
-    max: 30, // максимум 30 запросов в минуту для check-travel (увеличено с 20)
+    max: 120, // максимум 120 запросов в минуту на check-travel (под 1000+ онлайна при окне прибытия)
     message: {
         success: false,
         error: 'Слишком много запросов проверки путешествий, попробуйте позже'
