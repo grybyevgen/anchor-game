@@ -8,6 +8,8 @@ class User {
         this.firstName = data.first_name;
         this.lastName = data.last_name;
         this.coins = data.coins;
+        this.referralCode = data.referral_code;
+        this.referredBy = data.referred_by;
         this.createdAt = data.created_at;
         this.lastActive = data.last_active;
     }
@@ -73,10 +75,38 @@ class User {
         return await this.findOne({ id });
     }
 
+    static generateReferralCode(telegramId) {
+        // Генерируем код на основе telegram_id
+        const base = String(telegramId);
+        const hash = base.split('').reduce((acc, char) => {
+            return ((acc << 5) - acc) + char.charCodeAt(0);
+        }, 0);
+        return `ref_${Math.abs(hash).toString(36).substring(0, 8)}`;
+    }
+
     static async create(userData) {
         const supabase = getSupabase();
         
         try {
+            // Генерируем реферальный код
+            const referralCode = User.generateReferralCode(userData.telegramId);
+            
+            // Обрабатываем реферальную ссылку, если она есть
+            let referredBy = null;
+            if (userData.referralCode) {
+                const { data: referrer } = await withRetry(async () => {
+                    return await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('referral_code', userData.referralCode)
+                        .single();
+                });
+                
+                if (referrer) {
+                    referredBy = referrer.id;
+                }
+            }
+
             const { data, error } = await supabase
                 .from('users')
                 .insert({
@@ -84,7 +114,9 @@ class User {
                     username: userData.username || 'Игрок',
                     first_name: userData.firstName,
                     last_name: userData.lastName,
-                    coins: userData.coins || 1000
+                    coins: userData.coins || 1000,
+                    referral_code: referralCode,
+                    referred_by: referredBy
                 })
                 .select()
                 .single();
@@ -103,7 +135,37 @@ class User {
                 }
                 throw error;
             }
-            return new User(data);
+
+            const user = new User(data);
+
+            // Если пользователь был приглашен, создаем запись в referrals и начисляем бонус
+            if (referredBy) {
+                try {
+                    await withRetry(async () => {
+                        return await supabase
+                            .from('referrals')
+                            .insert({
+                                referrer_id: referredBy,
+                                referred_id: user.id,
+                                bonus_paid: false
+                            });
+                    });
+
+                    // Начисляем бонус рефереру (100 монет)
+                    const referrer = await User.findById(referredBy);
+                    if (referrer) {
+                        await referrer.addCoins(100);
+                    }
+
+                    // Начисляем бонус новому пользователю (100 монет)
+                    await user.addCoins(100);
+                } catch (refError) {
+                    // Не критично, если не удалось обработать реферала
+                    console.error('Ошибка обработки реферала:', refError);
+                }
+            }
+
+            return user;
         } catch (error) {
             // Обработка ошибок подключения на уровне catch
             const isConnectionError = error.message?.includes('fetch failed') || 
@@ -124,15 +186,22 @@ class User {
         const supabase = getSupabase();
         
         try {
+            const updateData = {
+                username: this.username,
+                first_name: this.firstName,
+                last_name: this.lastName,
+                coins: this.coins,
+                last_active: new Date().toISOString()
+            };
+
+            // Обновляем referral_code только если его еще нет
+            if (this.referralCode) {
+                updateData.referral_code = this.referralCode;
+            }
+
             const { data, error } = await supabase
                 .from('users')
-                .update({
-                    username: this.username,
-                    first_name: this.firstName,
-                    last_name: this.lastName,
-                    coins: this.coins,
-                    last_active: new Date().toISOString()
-                })
+                .update(updateData)
                 .eq('id', this.id)
                 .select()
                 .single();

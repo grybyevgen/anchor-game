@@ -101,9 +101,17 @@ function telegramAuthMiddleware(req, res, next) {
         const userStr = urlParams.get('user');
         if (userStr) {
             req.telegramUser = JSON.parse(decodeURIComponent(userStr));
+            // Устанавливаем userId для использования в routes
+            // Позже можно будет получить UUID пользователя из базы данных
+            req.userId = req.telegramUser.id;
         }
     } catch (error) {
         console.error('Ошибка парсинга данных пользователя:', error);
+    }
+
+    // Если userId не установлен, пытаемся получить из параметров запроса
+    if (!req.userId) {
+        req.userId = req.body.userId || req.params.userId || req.query.userId;
     }
 
     next();

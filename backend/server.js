@@ -9,6 +9,8 @@ const { telegramAuthMiddleware } = require('./middleware/auth');
 const shipRoutes = require('./routes/ships');
 const portRoutes = require('./routes/ports');
 const marketRoutes = require('./routes/market');
+const ratingRoutes = require('./routes/rating');
+const referralRoutes = require('./routes/referral');
 const User = require('./models/User');
 
 const app = express();
@@ -133,13 +135,15 @@ app.use('/api/', telegramAuthMiddleware);
 app.use('/api/ships', shipRoutes);
 app.use('/api/ports', portRoutes);
 app.use('/api/market', marketRoutes);
+app.use('/api/rating', ratingRoutes);
+app.use('/api/referral', referralRoutes);
 
 // Инициализация пользователя
 const { validateUserInit } = require('./middleware/validation');
 const gameConfig = require('./config/gameConfig');
 
 app.post('/api/users/init', validateUserInit, asyncHandler(async (req, res) => {
-    const { telegramId, username, firstName, lastName } = req.body;
+    const { telegramId, username, firstName, lastName, referralCode } = req.body;
     
     let user = await User.findOne({ telegramId });
     
@@ -149,12 +153,19 @@ app.post('/api/users/init', validateUserInit, asyncHandler(async (req, res) => {
             username: username || 'Игрок',
             firstName,
             lastName,
-            coins: gameConfig.initial.userCoins
+            coins: gameConfig.initial.userCoins,
+            referralCode: referralCode // Передаем реферальный код при создании
         });
     } else {
         // Обновляем последнюю активность
         user.username = username || user.username;
         user.lastActive = new Date().toISOString();
+        
+        // Если у пользователя нет referral_code, создаем его
+        if (!user.referralCode) {
+            user.referralCode = User.generateReferralCode(user.telegramId);
+        }
+        
         await user.save();
     }
     

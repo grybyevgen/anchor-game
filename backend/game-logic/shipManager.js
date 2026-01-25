@@ -465,6 +465,18 @@ async function unloadCargo(shipId, destination = 'port') {
         ship.totalProfit = (ship.totalProfit || 0) + netReward;
         ship.totalCargoMoved = (ship.totalCargoMoved || 0) + ship.cargo.amount;
 
+        // Обновляем заработок пользователя для рейтинга (только если прибыль положительная)
+        if (netReward > 0) {
+            try {
+                const UserEarnings = require('../models/UserEarnings');
+                const userEarnings = await UserEarnings.findOrCreate(user.id);
+                await userEarnings.addEarnings(netReward);
+            } catch (error) {
+                // Не критично, если не удалось обновить рейтинг
+                console.error('Ошибка обновления заработка для рейтинга:', error);
+            }
+        }
+
         // Очищаем груз ТОЛЬКО после всех операций и сохраняем судно со статистикой
         ship.cargo = null;
         await withRetry(async () => {
