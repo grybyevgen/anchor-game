@@ -26,6 +26,7 @@ const validateUserInit = [
     body('username').optional().isString().trim().isLength({ max: 255 }),
     body('firstName').optional().isString().trim().isLength({ max: 255 }),
     body('lastName').optional().isString().trim().isLength({ max: 255 }),
+    body('referralCode').optional().isString().trim().isLength({ min: 1, max: 64 }),
     validate
 ];
 

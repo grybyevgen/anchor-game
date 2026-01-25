@@ -151,10 +151,10 @@ class User {
                             });
                     });
 
-                    // Начисляем бонус рефереру (100 монет)
+                    // Начисляем рефереру 500 монет за каждого приглашённого
                     const referrer = await User.findById(referredBy);
                     if (referrer) {
-                        await referrer.addCoins(100);
+                        await referrer.addCoins(500);
                     }
 
                     // Начисляем бонус новому пользователю (100 монет)

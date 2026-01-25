@@ -266,7 +266,7 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // Запуск сервера
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`🚢 Сервер запущен на порту ${PORT}`);
     console.log(`📝 Режим: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔐 Аутентификация Telegram: ${process.env.DISABLE_TELEGRAM_AUTH === 'true' ? 'ОТКЛЮЧЕНА ⚠️' : 'ВКЛЮЧЕНА'}`);
@@ -274,6 +274,14 @@ app.listen(PORT, () => {
     // Предупреждение о токене выводится только один раз при старте
     if (!process.env.TELEGRAM_BOT_TOKEN && process.env.DISABLE_TELEGRAM_AUTH !== 'true') {
         console.warn('⚠️  TELEGRAM_BOT_TOKEN не установлен, аутентификация будет пропущена для всех запросов');
+    }
+
+    // Предзагрузка username бота для реферальных ссылок (t.me/bot?start=ref_xxx)
+    try {
+        const { getBotUsername } = require('./config/telegramBot');
+        await getBotUsername();
+    } catch (e) {
+        // не блокируем старт
     }
     
     // Запускаем периодическую проверку завершенных путешествий

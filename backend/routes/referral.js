@@ -3,8 +3,9 @@ const router = express.Router();
 const { asyncHandler } = require('../middleware/errorHandler');
 const User = require('../models/User');
 const { getSupabase, withRetry } = require('../config/database');
+const { getBotUsername } = require('../config/telegramBot');
 
-// Получение реферальной ссылки пользователя
+// Получение реферальной ссылки пользователя (ссылка на нашего бота)
 router.get('/link', asyncHandler(async (req, res) => {
     let userId = req.query.userId || req.userId;
     
@@ -36,8 +37,8 @@ router.get('/link', asyncHandler(async (req, res) => {
         await user.save();
     }
 
-    // Формируем реферальную ссылку
-    const botUsername = process.env.TELEGRAM_BOT_USERNAME || 'seashipping_bot';
+    // Формируем реферальную ссылку на нашего бота (игру)
+    const botUsername = await getBotUsername();
     const referralLink = `https://t.me/${botUsername}?start=${user.referralCode}`;
 
     res.json({
@@ -90,7 +91,7 @@ router.get('/stats', asyncHandler(async (req, res) => {
         res.json({
             success: true,
             referralCount,
-            bonusPerReferral: 100
+            bonusPerReferral: 500
         });
     } catch (error) {
         res.status(500).json({
