@@ -3,6 +3,28 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+// Проверка обязательных переменных окружения
+const requiredEnvVars = ['SUPABASE_URL'];
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+if (!supabaseKey) {
+    requiredEnvVars.push('SUPABASE_SERVICE_ROLE_KEY или SUPABASE_ANON_KEY');
+}
+
+// В production режиме проверяем обязательные переменные
+if (process.env.NODE_ENV === 'production') {
+    const missingVars = requiredEnvVars.filter(varName => {
+        if (varName === 'SUPABASE_URL') return !process.env.SUPABASE_URL;
+        if (varName.includes('SUPABASE_SERVICE_ROLE_KEY')) return !supabaseKey;
+        return !process.env[varName];
+    });
+    
+    if (missingVars.length > 0) {
+        console.error(`❌ Критическая ошибка: отсутствуют обязательные переменные окружения: ${missingVars.join(', ')}`);
+        console.error('💡 Проверьте файл backend/.env и убедитесь, что все переменные установлены');
+        process.exit(1);
+    }
+}
+
 const { initDatabase } = require('./config/database');
 const { errorHandler, notFoundHandler, asyncHandler, handleSupabaseError } = require('./middleware/errorHandler');
 const { telegramAuthMiddleware } = require('./middleware/auth');
