@@ -927,27 +927,50 @@ async function towShipToMaterials(shipId) {
 }
 
 /**
- * Получить информацию о буксировке в Завод Материалов (стоимость и возможность)
+ * Получить информацию о буксировке в Завод Материалов (стоимость и возможность).
+ * canReachAnyPort: true если судно может хотя бы в один порт дойти по здоровью (иначе предлагаем буксировку).
  */
 async function getTowInfoToMaterials(shipId) {
     const { withRetry } = require('../config/database');
     const ship = await withRetry(() => Ship.findById(shipId));
     if (!ship) return { success: false, canTow: false, error: 'Судно не найдено' };
-    if (ship.isTraveling) return { success: true, canTow: false, error: 'Судно в пути' };
+    if (ship.isTraveling) return { success: true, canTow: false, canReachAnyPort: true, error: 'Судно в пути' };
 
     const allPorts = await withRetry(() => Port.findAll());
     const materialsPort = allPorts.find(p => p.name && (p.name === MATERIALS_PORT_NAME || p.name.includes('Материалов')));
-    if (!materialsPort) return { success: true, canTow: false, error: 'Порт "Завод Материалов" не найден' };
+    if (!materialsPort) return { success: true, canTow: false, canReachAnyPort: true, error: 'Порт "Завод Материалов" не найден' };
 
     const currentPort = await withRetry(() => Port.findById(ship.currentPortId));
-    if (!currentPort) return { success: false, canTow: false, error: 'Текущий порт не найден' };
+    if (!currentPort) return { success: false, canTow: false, canReachAnyPort: false, error: 'Текущий порт не найден' };
 
     const isAlreadyInMaterials = ship.currentPortId === materialsPort.id || (currentPort.name && currentPort.name.includes('Материалов'));
-    if (isAlreadyInMaterials) return { success: true, canTow: false, error: 'Судно уже в порту Завод Материалов' };
+    if (isAlreadyInMaterials) return { success: true, canTow: false, canReachAnyPort: true, error: 'Судно уже в порту Завод Материалов' };
+
+    const currentHealth = ship.health ?? ship.maxHealth ?? 100;
+    const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
+    const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
+    const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
+
+    let canReachAnyPort = false;
+    for (const port of allPorts) {
+        if (port.id === ship.currentPortId) continue;
+        const dist = Port.calculateDistance(currentPort, port);
+        const healthDamage = Math.max(minDamage, Math.round(dist * healthDamagePerMile));
+        if (currentHealth > healthDamage) {
+            canReachAnyPort = true;
+            break;
+        }
+    }
 
     const distance = Port.calculateDistance(currentPort, materialsPort);
     const cost = Math.round(gameConfig.economy.towCost.base + distance * (gameConfig.economy.towCost.perMile || 0.5));
-    return { success: true, canTow: true, cost, destinationPortName: materialsPort.name || MATERIALS_PORT_NAME };
+    return {
+        success: true,
+        canTow: true,
+        canReachAnyPort,
+        cost,
+        destinationPortName: materialsPort.name || MATERIALS_PORT_NAME
+    };
 }
 
 /**
