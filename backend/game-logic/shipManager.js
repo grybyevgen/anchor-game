@@ -555,12 +555,14 @@ async function unloadCargo(shipId, destination = 'port') {
 }
 
 async function repairShip(shipId, amount = null) {
+    const { withRetry } = require('../config/database');
+
     const ship = await Ship.findById(shipId);
     if (!ship) {
         return { success: false, error: 'Судно не найдено' };
     }
 
-    if (ship.health >= ship.maxHealth) {
+    if (ship.health >= (ship.maxHealth ?? 100)) {
         return { success: false, error: 'Судно уже полностью исправно' };
     }
 
@@ -568,35 +570,50 @@ async function repairShip(shipId, amount = null) {
         return { success: false, error: 'Судно в пути' };
     }
 
+    const port = await withRetry(async () => await Port.findById(ship.currentPortId));
+    if (!port) {
+        return { success: false, error: 'Порт не найден' };
+    }
+    if (!portManager.canLoadCargo(port.name, 'materials')) {
+        return { success: false, error: 'Ремонт за материалы возможен только в порту «Завод Материалов»' };
+    }
+
+    const materialsCargo = port.getCargo('materials');
+    if (!materialsCargo || materialsCargo.amount < 1) {
+        return { success: false, error: `Недостаточно материалов в порту. Доступно: ${materialsCargo?.amount ?? 0}` };
+    }
+
     const maxHealth = ship.maxHealth ?? 100;
-    const maxRepairAmount = maxHealth - ship.health;
-    const totalDistance = Number(ship.totalDistanceNm || 0);
-    const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
-    const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
-    const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
-    const fullRepairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const healthNeeded = maxHealth - ship.health;
+    const materialsAvailable = Math.floor(materialsCargo.amount);
+    const maxRepairAmount = Math.min(healthNeeded, materialsAvailable);
+    const materialsPrice = typeof materialsCargo.price === 'number' ? materialsCargo.price : 0;
+
     const repairAmount = amount != null
         ? Math.min(Math.max(1, Math.floor(amount)), maxRepairAmount)
         : maxRepairAmount;
-    const repairCost = maxRepairAmount <= 0 ? 0 : Math.round((repairAmount / maxRepairAmount) * fullRepairCost);
+    const repairCost = Math.round(repairAmount * materialsPrice);
 
-    const user = await User.findById(ship.userId);
+    const user = await withRetry(async () => await User.findById(ship.userId));
     if (!user) {
         return { success: false, error: 'Пользователь не найден' };
     }
-    
     if (user.coins < repairCost) {
-        return { success: false, error: 'Недостаточно монет для ремонта' };
+        return { success: false, error: 'Недостаточно монет для покупки материалов' };
     }
 
     try {
-        await user.spendCoins(repairCost);
+        await withRetry(async () => await user.spendCoins(repairCost));
+        await withRetry(async () => await port.removeCargo('materials', repairAmount));
+
         ship.totalRepairCost = (ship.totalRepairCost || 0) + repairCost;
         ship.health = Math.min(ship.health + repairAmount, maxHealth);
+        const totalDistance = Number(ship.totalDistanceNm || 0);
         if (ship.health >= maxHealth) {
             ship.distanceAtLastRepair = totalDistance;
         }
-        await ship.save();
+        await withRetry(async () => await ship.save());
+
         return { success: true, ship, cost: repairCost, repaired: repairAmount };
     } catch (error) {
         console.error('Ошибка ремонта судна:', error);

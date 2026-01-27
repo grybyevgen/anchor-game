@@ -245,7 +245,7 @@ router.get('/:shipId/trip-preview', validateUUID('shipId'), asyncHandler(async (
     res.json(result);
 }));
 
-// Получить данные для ремонта (стоимость и объём) — расчёт только на backend
+// Получить данные для ремонта (материалы порта: 1 материал = 1 HP, стоимость = цена материалов в порту)
 router.get('/:shipId/repair-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
     const ship = await Ship.findById(shipId);
@@ -259,24 +259,32 @@ router.get('/:shipId/repair-info', validateUUID('shipId'), asyncHandler(async (r
     if (!canRepair) {
         return res.json({ success: true, canRepair: false });
     }
-    const maxRepairAmount = maxHealth - ship.health;
-    const totalDistance = Number(ship.totalDistanceNm || 0);
-    const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
-    const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
-    const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
-    const fullRepairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const materialsCargo = port.getCargo('materials');
+    const materialsPrice = typeof materialsCargo?.price === 'number' ? materialsCargo.price : 0;
+    const materialsAvailable = Math.floor(materialsCargo?.amount ?? 0);
+    const healthNeeded = maxHealth - ship.health;
+    const maxRepairAmount = Math.min(healthNeeded, materialsAvailable);
+    if (maxRepairAmount <= 0) {
+        return res.json({
+            success: true,
+            canRepair: false,
+            maxHealth,
+            currentHealth: ship.health,
+            error: materialsAvailable <= 0 ? 'В порту нет материалов для ремонта' : 'Судно уже полностью исправно'
+        });
+    }
     const amountParam = req.query.amount != null ? parseInt(req.query.amount, 10) : null;
     const repairAmount = amountParam != null
         ? Math.min(Math.max(1, amountParam), maxRepairAmount)
         : maxRepairAmount;
-    const repairCost = maxRepairAmount <= 0 ? 0 : Math.round((repairAmount / maxRepairAmount) * fullRepairCost);
+    const repairCost = Math.round(repairAmount * materialsPrice);
     res.json({
         success: true,
         canRepair: true,
         repairAmount,
         repairCost,
         maxRepairAmount,
-        fullRepairCost,
+        materialsPrice,
         maxHealth,
         currentHealth: ship.health
     });
