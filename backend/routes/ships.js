@@ -4,7 +4,7 @@ const Ship = require('../models/Ship');
 const User = require('../models/User');
 const Port = require('../models/Port');
 const gameConfig = require('../config/gameConfig');
-const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, checkAndCompleteTravels, checkShipTravel, upgradeShip } = require('../game-logic/shipManager');
+const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, checkAndCompleteTravels, checkShipTravel, upgradeShip, getTowInfo, getRefuelInfo, getTripPreview } = require('../game-logic/shipManager');
 const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
 const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
 const { idempotency } = require('../middleware/idempotency');
@@ -214,6 +214,66 @@ router.post('/:shipId/unload', validateUUID('shipId'), idempotency({ ttlMs: 60_0
     
     const result = await unloadCargo(shipId, destination || 'port');
     res.json(result);
+}));
+
+// Получить данные для буксировки (стоимость) — расчёт только на backend
+router.get('/:shipId/tow-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const result = await getTowInfo(shipId);
+    if (!result.success) return res.status(404).json(result);
+    res.json(result);
+}));
+
+// Получить данные для заправки (цена, макс. объём, стоимость) — расчёт только на backend. ?amount=N — стоимость для N единиц
+router.get('/:shipId/refuel-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const amount = req.query.amount != null ? parseInt(req.query.amount, 10) : null;
+    const result = await getRefuelInfo(shipId, amount);
+    if (!result.success) return res.status(404).json(result);
+    res.json(result);
+}));
+
+// Превью рейса: расстояние, расход топлива, towCost если нужно — расчёт только на backend
+router.get('/:shipId/trip-preview', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const destinationPortId = req.query.destinationPortId;
+    if (!destinationPortId) {
+        return res.status(400).json({ success: false, error: 'Необходим параметр destinationPortId' });
+    }
+    const result = await getTripPreview(shipId, destinationPortId);
+    if (!result.success) return res.status(400).json(result);
+    res.json(result);
+}));
+
+// Получить данные для ремонта (стоимость и объём) — расчёт только на backend
+router.get('/:shipId/repair-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const ship = await Ship.findById(shipId);
+    if (!ship) {
+        return res.status(404).json({ success: false, error: 'Судно не найдено' });
+    }
+    const port = await Port.findById(ship.currentPortId);
+    const maxHealth = ship.maxHealth ?? 100;
+    const inMaterialsPort = port && port.name && String(port.name).includes('Материалов');
+    const canRepair = !ship.isTraveling && inMaterialsPort && ship.health < maxHealth;
+    if (!canRepair) {
+        return res.json({ success: true, canRepair: false });
+    }
+    const repairAmount = maxHealth - ship.health;
+    // Стоимость ремонта пропорционально дистанции с момента последнего ремонта (как расход топлива)
+    const totalDistance = Number(ship.totalDistanceNm || 0);
+    const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
+    const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
+    const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
+    const repairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    res.json({
+        success: true,
+        canRepair: true,
+        repairAmount,
+        repairCost,
+        maxHealth,
+        currentHealth: ship.health
+    });
 }));
 
 // Починить судно

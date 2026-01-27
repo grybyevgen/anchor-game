@@ -89,8 +89,13 @@ module.exports = {
             fuelPrice: 2               // было 1
         },
         
-        repairCostPerHealth: 5,
-        
+        // Стоимость ремонта пропорционально дистанции (как расход топлива)
+        repairCostPerMile: 0.04,
+
+        // Износ здоровья за милю (как расход топлива — пропорционально дистанции)
+        healthDamagePerMile: 0.008,
+        minHealthDamagePerTravel: 1,
+
         // Стоимость буксировки судна
         towCost: {
             base: 500,              // Базовая стоимость буксировки

@@ -35,6 +35,7 @@ class Ship {
         this.totalCargoCost = data.total_cargo_cost ?? 0;
         this.totalRepairCost = data.total_repair_cost ?? 0;
         this.totalTowCost = data.total_tow_cost ?? 0;
+        this.distanceAtLastRepair = data.distance_at_last_repair ?? 0;
     }
 
     static async find(query) {
@@ -146,7 +147,8 @@ class Ship {
                     total_fuel_cost: 0,
                     total_cargo_cost: 0,
                     total_repair_cost: 0,
-                    total_tow_cost: 0
+                    total_tow_cost: 0,
+                    distance_at_last_repair: 0
                 })
                 .select()
                 .single();
@@ -210,7 +212,8 @@ class Ship {
             total_fuel_cost: this.totalFuelCost ?? 0,
             total_cargo_cost: this.totalCargoCost ?? 0,
             total_repair_cost: this.totalRepairCost ?? 0,
-            total_tow_cost: this.totalTowCost ?? 0
+            total_tow_cost: this.totalTowCost ?? 0,
+            distance_at_last_repair: this.distanceAtLastRepair ?? 0
         };
         
         try {

@@ -175,16 +175,24 @@ async function checkAndCompleteTravels() {
         for (const shipData of travelingShips || []) {
             try {
                 const ship = new Ship(shipData);
-                
+                const currentPort = await Port.findById(ship.currentPortId);
+                const destinationPort = await Port.findById(ship.destinationPortId);
+                if (currentPort && destinationPort) {
+                    const distance = Port.calculateDistance(currentPort, destinationPort);
+                    const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+                    const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
+                    const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
+                    ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
+                    console.log(`🔧 Судно ${ship.name}: износ по дистанции ${distance} миль = ${healthDamage} здоровья`);
+                }
+
                 // Портовые сборы теперь взимаются только при выгрузке груза
-                // Если судно с грузом - сбор будет взят при выгрузке
-                // Если судно пустое - сборов нет
                 if (ship.cargo) {
                     console.log(`🚢 Судно ${ship.name} прибыло с грузом. Сбор будет взят при выгрузке.`);
                 } else {
                     console.log(`✅ Судно ${ship.name} прибыло пустым. Сборов нет.`);
                 }
-                
+
                 await ship.completeTravel();
                 console.log(`✅ Судно ${ship.name} прибыло в порт`);
                 completed++;
@@ -227,6 +235,15 @@ async function checkShipTravel(shipId) {
     
     // Проверяем, завершилось ли путешествие
     if (ship.travelEndTime && new Date(ship.travelEndTime) <= new Date()) {
+        const currentPort = await Port.findById(ship.currentPortId);
+        const destinationPort = await Port.findById(ship.destinationPortId);
+        if (currentPort && destinationPort) {
+            const distance = Port.calculateDistance(currentPort, destinationPort);
+            const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+            const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
+            const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
+            ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
+        }
         await ship.completeTravel();
         return { success: true, completed: true, ship };
     }
@@ -538,8 +555,13 @@ async function repairShip(shipId) {
         return { success: false, error: 'Судно в пути' };
     }
 
-    const repairCost = (ship.maxHealth - ship.health) * gameConfig.economy.repairCostPerHealth;
-    
+    // Стоимость ремонта пропорционально дистанции с момента последнего ремонта (как расход топлива)
+    const totalDistance = Number(ship.totalDistanceNm || 0);
+    const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
+    const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
+    const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
+    const repairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+
     const user = await User.findById(ship.userId);
     if (!user) {
         return { success: false, error: 'Пользователь не найден' };
@@ -555,6 +577,7 @@ async function repairShip(shipId) {
 
         // Обновляем статистику по судну: затраты на ремонт
         ship.totalRepairCost = (ship.totalRepairCost || 0) + repairCost;
+        ship.distanceAtLastRepair = totalDistance;
 
         ship.health = ship.maxHealth;
         await ship.save();
@@ -886,6 +909,122 @@ async function upgradeShip(shipId) {
     }
 }
 
+/**
+ * Получить информацию о буксировке (стоимость и возможность) — расчёт только на backend
+ */
+async function getTowInfo(shipId) {
+    const { withRetry } = require('../config/database');
+    const ship = await withRetry(() => Ship.findById(shipId));
+    if (!ship) return { success: false, canTow: false, error: 'Судно не найдено' };
+    if (ship.isTraveling) return { success: true, canTow: false, error: 'Судно в пути' };
+
+    const allPorts = await withRetry(() => Port.findAll());
+    const oilPort = allPorts.find(p => p.name && p.name.includes('Нефтяной'));
+    if (!oilPort) return { success: true, canTow: false, error: 'Порт "Нефтяной завод" не найден' };
+
+    const currentPort = await withRetry(() => Port.findById(ship.currentPortId));
+    if (!currentPort) return { success: false, canTow: false, error: 'Текущий порт не найден' };
+
+    const isAlreadyInOilPort = ship.currentPortId === oilPort.id || currentPort.name && currentPort.name.includes('Нефтяной');
+    if (isAlreadyInOilPort) return { success: true, canTow: false, error: 'Судно уже в порту Нефтяной завод' };
+
+    const distance = Port.calculateDistance(currentPort, oilPort);
+    const cost = Math.round(
+        gameConfig.economy.towCost.base +
+        distance * (gameConfig.economy.towCost.perMile || 0.5)
+    );
+    return {
+        success: true,
+        canTow: true,
+        cost,
+        destinationPortName: oilPort.name || 'Порт "Нефтяной завод"'
+    };
+}
+
+/**
+ * Получить информацию о заправке (цена, макс. объём, стоимость для количества) — расчёт только на backend
+ * amount — опционально; если передан, cost считается для этого количества
+ */
+async function getRefuelInfo(shipId, amount = null) {
+    const { withRetry } = require('../config/database');
+    const ship = await withRetry(() => Ship.findById(shipId));
+    if (!ship) return { success: false, canRefuel: false, error: 'Судно не найдено' };
+    if (ship.isTraveling) return { success: true, canRefuel: false, error: 'Судно в пути' };
+
+    const port = await withRetry(() => Port.findById(ship.currentPortId));
+    if (!port) return { success: false, canRefuel: false, error: 'Порт не найден' };
+    if (!portManager.canLoadCargo(port.name, 'oil')) {
+        return { success: true, canRefuel: false, error: 'Бункеровка возможна только в порту, где есть нефть' };
+    }
+
+    const cargo = port.getCargo('oil');
+    if (!cargo) return { success: true, canRefuel: false, error: 'В порту нет нефти' };
+
+    const maxRefuelAmount = Math.max(0, (ship.maxFuel || 100) - (ship.fuel || 0));
+    if (maxRefuelAmount <= 0) return { success: true, canRefuel: false, error: 'Судно уже заправлено' };
+
+    const oilPrice = typeof cargo.price === 'number' ? cargo.price : 0;
+    const refuelAmount = amount != null ? Math.min(Math.max(0, Math.floor(Number(amount))), maxRefuelAmount) : maxRefuelAmount;
+    const cost = Math.ceil((oilPrice * refuelAmount));
+
+    return {
+        success: true,
+        canRefuel: true,
+        oilPrice,
+        maxRefuelAmount,
+        cost,
+        refuelAmountForCost: refuelAmount
+    };
+}
+
+/**
+ * Превью рейса: расстояние, расход топлива, стоимость буксировки при необходимости — расчёт только на backend
+ */
+async function getTripPreview(shipId, destinationPortId) {
+    const ship = await Ship.findById(shipId);
+    if (!ship) return { success: false, error: 'Судно не найдено' };
+    if (ship.isTraveling) return { success: false, error: 'Судно уже в пути' };
+
+    const currentPort = await Port.findById(ship.currentPortId);
+    const destinationPort = await Port.findById(destinationPortId);
+    if (!currentPort) return { success: false, error: 'Текущий порт не найден' };
+    if (!destinationPort) return { success: false, error: 'Порт назначения не найден' };
+    if (ship.currentPortId === destinationPortId) return { success: false, error: 'Судно уже в этом порту' };
+
+    const distance = Port.calculateDistance(currentPort, destinationPort);
+    const distanceInt = Math.round(distance);
+    const fuelConsumptionRate = gameConfig.fuelCost.consumptionPerMile[ship.type] || 0.12;
+    let fuelConsumption = Math.max(
+        distance * fuelConsumptionRate,
+        gameConfig.fuelCost.minFuelPerTravel
+    );
+    if (ship.cargo) fuelConsumption = fuelConsumption * 1.05;
+    fuelConsumption = Math.round(fuelConsumption);
+
+    const hasEnoughFuel = (ship.fuel || 0) >= fuelConsumption;
+    let towCost = null;
+    if (!hasEnoughFuel) {
+        const { withRetry } = require('../config/database');
+        const allPorts = await withRetry(() => Port.findAll());
+        const oilPort = allPorts.find(p => p.name && p.name.includes('Нефтяной'));
+        if (oilPort && currentPort.id !== oilPort.id) {
+            const towDistance = Port.calculateDistance(currentPort, oilPort);
+            towCost = Math.round(
+                gameConfig.economy.towCost.base +
+                towDistance * (gameConfig.economy.towCost.perMile || 0.5)
+            );
+        }
+    }
+
+    return {
+        success: true,
+        distance: distanceInt,
+        fuelConsumption,
+        canSend: hasEnoughFuel,
+        towCost
+    };
+}
+
 module.exports = {
     sendShipToPort,
     loadCargo,
@@ -895,5 +1034,8 @@ module.exports = {
     towShip,
     checkAndCompleteTravels,
     checkShipTravel,
-    upgradeShip
+    upgradeShip,
+    getTowInfo,
+    getRefuelInfo,
+    getTripPreview
 };
