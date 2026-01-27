@@ -78,8 +78,8 @@ const validateLoadCargo = [
         .notEmpty().withMessage('amount обязателен')
         .isInt({ 
             min: gameConfig.validation.minCargoAmount, 
-            max: gameConfig.validation.maxCargoAmount 
-        }).withMessage(`amount должен быть от ${gameConfig.validation.minCargoAmount} до ${gameConfig.validation.maxCargoAmount}`),
+            max: gameConfig.validation.maxCargoAmountValidation ?? 150
+        }).withMessage(`amount должен быть от ${gameConfig.validation.minCargoAmount} до ${gameConfig.validation.maxCargoAmountValidation ?? 150}`),
     validate
 ];
 

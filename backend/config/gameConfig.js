@@ -120,10 +120,20 @@ module.exports = {
     // Валидация
     validation: {
         minCargoAmount: 1,
-        maxCargoAmount: 100, // Максимальное количество груза на судне - 100 единиц
+        maxCargoAmount: 100, // Базовое макс. количество груза (у апгрейднутых судов выше, лимит в load — по ship.maxCargo)
+        maxCargoAmountValidation: 150, // Верхняя граница для валидации body.amount (100 + 10*5 уровней)
         minPrice: 0,
         maxPrice: 1000000,
         minCrewLevel: 1,
         maxCrewLevel: 10
+    },
+
+    // Повышение уровня судна (уровень = crew_level в БД)
+    shipUpgrade: {
+        costPerLevel: 5000,   // Стоимость = costPerLevel * текущий_уровень
+        healthBonus: 5,
+        fuelBonus: 5,
+        cargoBonus: 5,
+        maxLevel: 10
     }
 };

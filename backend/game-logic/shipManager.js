@@ -253,9 +253,9 @@ async function loadCargo(shipId, cargoType, amount) {
         return { success: false, error: 'Количество груза должно быть больше 0' };
     }
     
-    // Максимальное количество груза на судне - 100 единиц
-    if (amount > 100) {
-        return { success: false, error: 'Максимальное количество груза - 100 единиц' };
+    const maxCargo = ship.maxCargo ?? gameConfig.validation.maxCargoAmount;
+    if (amount > maxCargo) {
+        return { success: false, error: `Максимальное количество груза на этом судне - ${maxCargo} единиц` };
     }
     
     const port = await Port.findById(ship.currentPortId);
@@ -839,6 +839,53 @@ async function towShip(shipId) {
     }
 }
 
+/**
+ * Повысить уровень судна (crew_level). Списывает монеты, увеличивает max_fuel, max_health, max_cargo и health.
+ */
+async function upgradeShip(shipId) {
+    const ship = await Ship.findById(shipId);
+    if (!ship) {
+        return { success: false, error: 'Судно не найдено' };
+    }
+
+    const { maxLevel, costPerLevel, healthBonus, fuelBonus, cargoBonus } = gameConfig.shipUpgrade;
+    const currentLevel = ship.crewLevel ?? 1;
+
+    if (currentLevel >= maxLevel) {
+        return { success: false, error: 'Достигнут максимальный уровень судна' };
+    }
+
+    const cost = costPerLevel * currentLevel;
+    const user = await User.findById(ship.userId);
+    if (!user) {
+        return { success: false, error: 'Пользователь не найден' };
+    }
+    if (user.coins < cost) {
+        return { success: false, error: `Недостаточно монет. Требуется: ${cost}` };
+    }
+
+    try {
+        await user.spendCoins(cost);
+
+        ship.crewLevel = currentLevel + 1;
+        ship.maxFuel = (ship.maxFuel ?? 100) + fuelBonus;
+        ship.maxHealth = (ship.maxHealth ?? 100) + healthBonus;
+        ship.maxCargo = (ship.maxCargo ?? 100) + cargoBonus;
+        ship.health = Math.min((ship.health ?? 100) + healthBonus, ship.maxHealth);
+
+        await ship.save();
+
+        return {
+            success: true,
+            ship,
+            newLevel: ship.crewLevel,
+            cost
+        };
+    } catch (err) {
+        throw err;
+    }
+}
+
 module.exports = {
     sendShipToPort,
     loadCargo,
@@ -847,5 +894,6 @@ module.exports = {
     refuelShip,
     towShip,
     checkAndCompleteTravels,
-    checkShipTravel
+    checkShipTravel,
+    upgradeShip
 };

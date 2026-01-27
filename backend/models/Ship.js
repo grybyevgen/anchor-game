@@ -12,6 +12,7 @@ class Ship {
         this.health = data.health;
         this.maxHealth = data.max_health;
         this.crewLevel = data.crew_level;
+        this.maxCargo = data.max_cargo ?? 100;
         this.cargo = data.cargo_type ? {
             type: data.cargo_type,
             amount: data.cargo_amount,
@@ -136,6 +137,7 @@ class Ship {
                     health: shipData.health || 100,
                     max_health: shipData.maxHealth || 100,
                     crew_level: shipData.crewLevel || 1,
+                    max_cargo: shipData.maxCargo ?? 100,
                     purchase_price: shipData.purchasePrice || 0,
                     total_distance_nm: 0,
                     total_trips: 0,
@@ -191,6 +193,7 @@ class Ship {
             health: this.health,
             max_health: this.maxHealth,
             crew_level: this.crewLevel,
+            max_cargo: this.maxCargo ?? 100,
             cargo_type: this.cargo ? this.cargo.type : null,
             cargo_amount: this.cargo ? this.cargo.amount : null,
             cargo_purchase_port_id: this.cargo?.purchasePortId || null,
