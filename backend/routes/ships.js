@@ -259,31 +259,35 @@ router.get('/:shipId/repair-info', validateUUID('shipId'), asyncHandler(async (r
     if (!canRepair) {
         return res.json({ success: true, canRepair: false });
     }
-    const repairAmount = maxHealth - ship.health;
-    // Стоимость ремонта пропорционально дистанции с момента последнего ремонта (как расход топлива)
+    const maxRepairAmount = maxHealth - ship.health;
     const totalDistance = Number(ship.totalDistanceNm || 0);
     const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
     const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
     const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
-    const repairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const fullRepairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const amountParam = req.query.amount != null ? parseInt(req.query.amount, 10) : null;
+    const repairAmount = amountParam != null
+        ? Math.min(Math.max(1, amountParam), maxRepairAmount)
+        : maxRepairAmount;
+    const repairCost = maxRepairAmount <= 0 ? 0 : Math.round((repairAmount / maxRepairAmount) * fullRepairCost);
     res.json({
         success: true,
         canRepair: true,
         repairAmount,
         repairCost,
+        maxRepairAmount,
+        fullRepairCost,
         maxHealth,
         currentHealth: ship.health
     });
 }));
 
-// Починить судно
+// Починить судно. body.amount — опционально, сколько единиц здоровья восстановить (иначе полный ремонт)
 router.post('/:shipId/repair', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
-    
-    // Проверяем завершенные путешествия перед ремонтом
+    const amount = req.body && req.body.amount != null ? parseInt(req.body.amount, 10) : null;
     await checkShipTravel(shipId);
-    
-    const result = await repairShip(shipId);
+    const result = await repairShip(shipId, amount);
     res.json(result);
 }));
 

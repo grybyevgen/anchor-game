@@ -67,6 +67,19 @@ async function sendShipToPort(shipId, portId) {
         
         fuelCost = Math.round(fuelCost);
         console.log(`[sendShipToPort] Расход топлива: ${fuelCost}, доступно: ${ship.fuel}`);
+
+        const currentHealth = ship.health ?? ship.maxHealth ?? 100;
+        if (currentHealth <= 0) {
+            console.error(`[sendShipToPort] Судно нуждается в ремонте: здоровье ${currentHealth}`);
+            return { success: false, error: 'Судно не может выходить в рейс при нулевом здоровье. Отремонтируйте судно в Заводе материалов.' };
+        }
+        const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+        const minHealthDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
+        const healthDamage = Math.max(minHealthDamage, Math.round(distance * healthDamagePerMile));
+        if (currentHealth <= healthDamage) {
+            console.error(`[sendShipToPort] Недостаточно здоровья: требуется более ${healthDamage}, доступно ${currentHealth}`);
+            return { success: false, error: `Недостаточно здоровья для рейса. Потеря за рейс: ${healthDamage}, текущее здоровье: ${currentHealth}. Отремонтируйте судно в Заводе материалов.` };
+        }
         
         // Обновляем статистику по судну: расстояние и количество рейсов
         // В БД поле total_distance_nm = BIGINT, поэтому сохраняем ОКРУГЛЁННОЕ значение (целое число миль)
@@ -541,7 +554,7 @@ async function unloadCargo(shipId, destination = 'port') {
     }
 }
 
-async function repairShip(shipId) {
+async function repairShip(shipId, amount = null) {
     const ship = await Ship.findById(shipId);
     if (!ship) {
         return { success: false, error: 'Судно не найдено' };
@@ -555,12 +568,17 @@ async function repairShip(shipId) {
         return { success: false, error: 'Судно в пути' };
     }
 
-    // Стоимость ремонта пропорционально дистанции с момента последнего ремонта (как расход топлива)
+    const maxHealth = ship.maxHealth ?? 100;
+    const maxRepairAmount = maxHealth - ship.health;
     const totalDistance = Number(ship.totalDistanceNm || 0);
     const distanceAtLastRepair = Number(ship.distanceAtLastRepair || 0);
     const distanceSinceLastRepair = Math.max(0, totalDistance - distanceAtLastRepair);
     const repairCostPerMile = gameConfig.economy.repairCostPerMile ?? 0.04;
-    const repairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const fullRepairCost = Math.round(distanceSinceLastRepair * repairCostPerMile);
+    const repairAmount = amount != null
+        ? Math.min(Math.max(1, Math.floor(amount)), maxRepairAmount)
+        : maxRepairAmount;
+    const repairCost = maxRepairAmount <= 0 ? 0 : Math.round((repairAmount / maxRepairAmount) * fullRepairCost);
 
     const user = await User.findById(ship.userId);
     if (!user) {
@@ -571,18 +589,15 @@ async function repairShip(shipId) {
         return { success: false, error: 'Недостаточно монет для ремонта' };
     }
 
-    // Атомарная операция: сначала списываем монеты, потом чиним
     try {
         await user.spendCoins(repairCost);
-
-        // Обновляем статистику по судну: затраты на ремонт
         ship.totalRepairCost = (ship.totalRepairCost || 0) + repairCost;
-        ship.distanceAtLastRepair = totalDistance;
-
-        ship.health = ship.maxHealth;
+        ship.health = Math.min(ship.health + repairAmount, maxHealth);
+        if (ship.health >= maxHealth) {
+            ship.distanceAtLastRepair = totalDistance;
+        }
         await ship.save();
-        
-        return { success: true, ship, cost: repairCost };
+        return { success: true, ship, cost: repairCost, repaired: repairAmount };
     } catch (error) {
         console.error('Ошибка ремонта судна:', error);
         throw error;
@@ -1001,6 +1016,12 @@ async function getTripPreview(shipId, destinationPortId) {
     if (ship.cargo) fuelConsumption = fuelConsumption * 1.05;
     fuelConsumption = Math.round(fuelConsumption);
 
+    const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+    const minHealthDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
+    const healthDamage = Math.max(minHealthDamage, Math.round(distance * healthDamagePerMile));
+    const currentHealth = ship.health ?? ship.maxHealth ?? 100;
+    const hasEnoughHealth = currentHealth > 0 && currentHealth > healthDamage;
+
     const hasEnoughFuel = (ship.fuel || 0) >= fuelConsumption;
     let towCost = null;
     if (!hasEnoughFuel) {
@@ -1020,7 +1041,10 @@ async function getTripPreview(shipId, destinationPortId) {
         success: true,
         distance: distanceInt,
         fuelConsumption,
-        canSend: hasEnoughFuel,
+        healthDamage,
+        canSend: hasEnoughFuel && hasEnoughHealth,
+        canSendByFuel: hasEnoughFuel,
+        canSendByHealth: hasEnoughHealth,
         towCost
     };
 }
