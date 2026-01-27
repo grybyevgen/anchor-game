@@ -108,7 +108,11 @@ async function sendShipToPort(shipId, portId) {
         
         ship.fuel -= fuelCost;
         console.log(`[sendShipToPort] Топливо после списания: ${ship.fuel}`);
-        
+
+        // Списываем здоровье при старте рейса (как и топливо)
+        ship.health = Math.max(0, currentHealth - healthDamage);
+        console.log(`[sendShipToPort] Здоровье после списания износа за рейс: ${ship.health}`);
+
         await ship.startTravel(portId, travelTime);
         console.log(`[sendShipToPort] Судно успешно отправлено в путь`);
         
@@ -189,17 +193,7 @@ async function checkAndCompleteTravels() {
         for (const shipData of travelingShips || []) {
             try {
                 const ship = new Ship(shipData);
-                const currentPort = await Port.findById(ship.currentPortId);
-                const destinationPort = await Port.findById(ship.destinationPortId);
-                if (currentPort && destinationPort) {
-                    const distance = Port.calculateDistance(currentPort, destinationPort);
-                    const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
-                    const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
-                    const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
-                    const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
-                    ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
-                    console.log(`🔧 Судно ${ship.name}: износ по дистанции ${distance} миль = ${healthDamage} здоровья`);
-                }
+                // Здоровье списывается при старте рейса (в sendShipToPort), здесь только прибытие
 
                 // Портовые сборы теперь взимаются только при выгрузке груза
                 if (ship.cargo) {
@@ -248,18 +242,8 @@ async function checkShipTravel(shipId) {
         return { success: true, completed: false, ship };
     }
     
-    // Проверяем, завершилось ли путешествие
+    // Проверяем, завершилось ли путешествие (здоровье уже списано при старте рейса)
     if (ship.travelEndTime && new Date(ship.travelEndTime) <= new Date()) {
-        const currentPort = await Port.findById(ship.currentPortId);
-        const destinationPort = await Port.findById(ship.destinationPortId);
-        if (currentPort && destinationPort) {
-            const distance = Port.calculateDistance(currentPort, destinationPort);
-            const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
-            const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
-            const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
-            const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
-            ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
-        }
         await ship.completeTravel();
         return { success: true, completed: true, ship };
     }
