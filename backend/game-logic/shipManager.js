@@ -881,6 +881,75 @@ async function towShip(shipId) {
     }
 }
 
+/** Целевой порт для буксировки: название для поиска в БД */
+const MATERIALS_PORT_NAME = 'Порт "Завод Материалов"';
+
+/**
+ * Отбуксировать судно в порт "Завод Материалов" (для ремонта)
+ * Логика та же, что для Нефтяного завода: списание монет, перемещение судна.
+ */
+async function towShipToMaterials(shipId) {
+    try {
+        const { withRetry } = require('../config/database');
+        const ship = await withRetry(() => Ship.findById(shipId));
+        if (!ship) return { success: false, error: 'Судно не найдено' };
+        if (ship.isTraveling) return { success: false, error: 'Судно в пути. Буксировка невозможна во время движения.' };
+
+        const allPorts = await withRetry(() => Port.findAll());
+        const materialsPort = allPorts.find(p => p.name && (p.name === MATERIALS_PORT_NAME || p.name.includes('Материалов')));
+        if (!materialsPort) return { success: false, error: 'Порт "Завод Материалов" не найден' };
+
+        const currentPort = await withRetry(() => Port.findById(ship.currentPortId));
+        if (!currentPort) return { success: false, error: 'Текущий порт не найден' };
+
+        const isAlreadyInMaterials = ship.currentPortId === materialsPort.id || (currentPort.name && currentPort.name.includes('Материалов'));
+        if (isAlreadyInMaterials) return { success: false, error: 'Судно уже в порту "Завод Материалов". Отремонтируйте судно для продолжения работы.' };
+
+        const distance = Port.calculateDistance(currentPort, materialsPort);
+        const towCost = Math.round(gameConfig.economy.towCost.base + (distance * gameConfig.economy.towCost.perMile));
+
+        const user = await withRetry(() => User.findById(ship.userId));
+        if (!user) return { success: false, error: 'Пользователь не найден' };
+        if (user.coins < towCost) return { success: false, error: `Недостаточно монет для буксировки. Требуется: ${towCost}, доступно: ${user.coins}` };
+
+        await withRetry(() => user.spendCoins(towCost));
+        ship.totalTowCost = (ship.totalTowCost || 0) + towCost;
+        ship.currentPortId = materialsPort.id;
+        await withRetry(() => ship.save());
+
+        return { success: true, ship, cost: towCost, distance, message: 'Судно отбуксировано в порт "Завод Материалов". Отремонтируйте судно для продолжения работы.' };
+    } catch (error) {
+        console.error('[towShipToMaterials] Ошибка:', error);
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (isConnectionError(error)) return { success: false, error: 'Временная ошибка подключения к базе данных. Попробуйте еще раз через несколько секунд.' };
+        return { success: false, error: error.message || 'Ошибка при буксировке судна' };
+    }
+}
+
+/**
+ * Получить информацию о буксировке в Завод Материалов (стоимость и возможность)
+ */
+async function getTowInfoToMaterials(shipId) {
+    const { withRetry } = require('../config/database');
+    const ship = await withRetry(() => Ship.findById(shipId));
+    if (!ship) return { success: false, canTow: false, error: 'Судно не найдено' };
+    if (ship.isTraveling) return { success: true, canTow: false, error: 'Судно в пути' };
+
+    const allPorts = await withRetry(() => Port.findAll());
+    const materialsPort = allPorts.find(p => p.name && (p.name === MATERIALS_PORT_NAME || p.name.includes('Материалов')));
+    if (!materialsPort) return { success: true, canTow: false, error: 'Порт "Завод Материалов" не найден' };
+
+    const currentPort = await withRetry(() => Port.findById(ship.currentPortId));
+    if (!currentPort) return { success: false, canTow: false, error: 'Текущий порт не найден' };
+
+    const isAlreadyInMaterials = ship.currentPortId === materialsPort.id || (currentPort.name && currentPort.name.includes('Материалов'));
+    if (isAlreadyInMaterials) return { success: true, canTow: false, error: 'Судно уже в порту Завод Материалов' };
+
+    const distance = Port.calculateDistance(currentPort, materialsPort);
+    const cost = Math.round(gameConfig.economy.towCost.base + distance * (gameConfig.economy.towCost.perMile || 0.5));
+    return { success: true, canTow: true, cost, destinationPortName: materialsPort.name || MATERIALS_PORT_NAME };
+}
+
 /**
  * Повысить уровень судна (crew_level). Списывает монеты, увеличивает max_fuel, max_health, max_cargo и health.
  */
@@ -1066,5 +1135,7 @@ module.exports = {
     upgradeShip,
     getTowInfo,
     getRefuelInfo,
-    getTripPreview
+    getTripPreview,
+    towShipToMaterials,
+    getTowInfoToMaterials
 };

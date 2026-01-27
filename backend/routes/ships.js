@@ -4,7 +4,7 @@ const Ship = require('../models/Ship');
 const User = require('../models/User');
 const Port = require('../models/Port');
 const gameConfig = require('../config/gameConfig');
-const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, checkAndCompleteTravels, checkShipTravel, upgradeShip, getTowInfo, getRefuelInfo, getTripPreview } = require('../game-logic/shipManager');
+const { sendShipToPort, loadCargo, unloadCargo, repairShip, refuelShip, towShip, towShipToMaterials, checkAndCompleteTravels, checkShipTravel, upgradeShip, getTowInfo, getTowInfoToMaterials, getRefuelInfo, getTripPreview } = require('../game-logic/shipManager');
 const { asyncHandler, handleSupabaseError } = require('../middleware/errorHandler');
 const { validateBuyShip, validateTravel, validateLoadCargo, validateUUID } = require('../middleware/validation');
 const { idempotency } = require('../middleware/idempotency');
@@ -224,6 +224,14 @@ router.get('/:shipId/tow-info', validateUUID('shipId'), asyncHandler(async (req,
     res.json(result);
 }));
 
+// Буксировка в Завод Материалов (для ремонта)
+router.get('/:shipId/tow-materials-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    const result = await getTowInfoToMaterials(shipId);
+    if (!result.success) return res.status(404).json(result);
+    res.json(result);
+}));
+
 // Получить данные для заправки (цена, макс. объём, стоимость) — расчёт только на backend. ?amount=N — стоимость для N единиц
 router.get('/:shipId/refuel-info', validateUUID('shipId'), asyncHandler(async (req, res) => {
     const { shipId } = req.params;
@@ -375,6 +383,19 @@ router.post('/:shipId/tow', validateUUID('shipId'), asyncHandler(async (req, res
         console.error(`[POST /ships/:shipId/tow] Исключение при буксировке:`, error);
         throw error; // Пробрасываем для обработки в asyncHandler
     }
+}));
+
+// Отбуксировать судно в порт "Завод Материалов" (для ремонта)
+router.post('/:shipId/tow-materials', validateUUID('shipId'), asyncHandler(async (req, res) => {
+    const { shipId } = req.params;
+    try {
+        await checkShipTravel(shipId);
+    } catch (e) {
+        const { isConnectionError } = require('../middleware/errorHandler');
+        if (!isConnectionError(e)) console.warn('[POST /ships/:shipId/tow-materials] checkShipTravel:', e.message);
+    }
+    const result = await towShipToMaterials(shipId);
+    res.json(result);
 }));
 
 module.exports = router;
