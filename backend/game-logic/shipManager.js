@@ -73,7 +73,8 @@ async function sendShipToPort(shipId, portId) {
             console.error(`[sendShipToPort] Судно нуждается в ремонте: здоровье ${currentHealth}`);
             return { success: false, error: 'Судно не может выходить в рейс при нулевом здоровье. Отремонтируйте судно в Заводе материалов.' };
         }
-        const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+        const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
+        let healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
         const minHealthDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
         const healthDamage = Math.max(minHealthDamage, Math.round(distance * healthDamagePerMile));
         if (currentHealth <= healthDamage) {
@@ -192,7 +193,8 @@ async function checkAndCompleteTravels() {
                 const destinationPort = await Port.findById(ship.destinationPortId);
                 if (currentPort && destinationPort) {
                     const distance = Port.calculateDistance(currentPort, destinationPort);
-                    const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+                    const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
+                    const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
                     const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
                     const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
                     ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
@@ -252,7 +254,8 @@ async function checkShipTravel(shipId) {
         const destinationPort = await Port.findById(ship.destinationPortId);
         if (currentPort && destinationPort) {
             const distance = Port.calculateDistance(currentPort, destinationPort);
-            const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+            const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
+            const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
             const minDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
             const healthDamage = Math.max(minDamage, Math.round(distance * healthDamagePerMile));
             ship.health = Math.max(0, (ship.health ?? ship.maxHealth ?? 100) - healthDamage);
@@ -1033,7 +1036,8 @@ async function getTripPreview(shipId, destinationPortId) {
     if (ship.cargo) fuelConsumption = fuelConsumption * 1.05;
     fuelConsumption = Math.round(fuelConsumption);
 
-    const healthDamagePerMile = gameConfig.economy.healthDamagePerMile ?? 0.008;
+    const healthRate = gameConfig.economy.healthDamagePerMileByType?.[ship.type] ?? 0.008;
+    const healthDamagePerMile = ship.cargo ? healthRate * 1.05 : healthRate;
     const minHealthDamage = gameConfig.economy.minHealthDamagePerTravel ?? 1;
     const healthDamage = Math.max(minHealthDamage, Math.round(distance * healthDamagePerMile));
     const currentHealth = ship.health ?? ship.maxHealth ?? 100;
