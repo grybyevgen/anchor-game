@@ -488,10 +488,51 @@ async function unloadCargo(shipId, destination = 'port') {
                 const UserEarnings = require('../models/UserEarnings');
                 const userEarnings = await UserEarnings.findOrCreate(user.id);
                 await userEarnings.addEarnings(netReward);
+                await userEarnings.addWeeklyStats(Math.round(distance || 0), 1, ship.cargo.amount || 0);
             } catch (error) {
                 // Не критично, если не удалось обновить рейтинг
                 console.error('Ошибка обновления заработка для рейтинга:', error);
             }
+        } else {
+            try {
+                const UserEarnings = require('../models/UserEarnings');
+                const userEarnings = await UserEarnings.findOrCreate(user.id);
+                await userEarnings.addWeeklyStats(Math.round(distance || 0), 1, ship.cargo.amount || 0);
+            } catch (err) {
+                console.error('Ошибка обновления недельной статистики:', err);
+            }
+        }
+
+        // Ежедневная статистика: +1 рейс за сегодня (для задания «Опытный моряк»)
+        try {
+            const { getSupabase, withRetry } = require('../config/database');
+            const supabase = getSupabase();
+            const today = new Date().toISOString().split('T')[0];
+            const { data: row } = await withRetry(async () => {
+                return await supabase
+                    .from('user_daily_stats')
+                    .select('trips_count')
+                    .eq('user_id', ship.userId)
+                    .eq('stat_date', today)
+                    .maybeSingle();
+            });
+            if (row) {
+                await withRetry(async () => {
+                    return await supabase
+                        .from('user_daily_stats')
+                        .update({ trips_count: (row.trips_count || 0) + 1 })
+                        .eq('user_id', ship.userId)
+                        .eq('stat_date', today);
+                });
+            } else {
+                await withRetry(async () => {
+                    return await supabase
+                        .from('user_daily_stats')
+                        .insert({ user_id: ship.userId, stat_date: today, trips_count: 1 });
+                });
+            }
+        } catch (dailyErr) {
+            console.error('Ошибка обновления ежедневной статистики:', dailyErr);
         }
 
         // Очищаем груз ТОЛЬКО после всех операций и сохраняем судно со статистикой
@@ -601,6 +642,12 @@ async function repairShip(shipId, amount = null) {
         }
         await withRetry(async () => await ship.save());
 
+        try {
+            await user.addHealthRepaired(repairAmount);
+        } catch (e) {
+            console.error('Ошибка обновления статистики ремонта:', e);
+        }
+
         return { success: true, ship, cost: repairCost, repaired: repairAmount };
     } catch (error) {
         console.error('Ошибка ремонта судна:', error);
@@ -693,6 +740,12 @@ async function refuelShip(shipId, cargoType, amount) {
         await withRetry(async () => {
             return await ship.save();
         });
+
+        try {
+            await user.addFuelRefueled(actualAmount);
+        } catch (e) {
+            console.error('Ошибка обновления статистики заправки:', e);
+        }
 
         // Удаляем нефть из порта
         await withRetry(async () => {

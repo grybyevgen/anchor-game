@@ -8,6 +8,9 @@ class UserEarnings {
         this.weeklyEarnings = data.weekly_earnings || 0;
         this.weekStartDate = data.week_start_date;
         this.lastUpdated = data.last_updated;
+        this.weeklyDistanceNm = data.weekly_distance_nm ?? 0;
+        this.weeklyTrips = data.weekly_trips ?? 0;
+        this.weeklyCargoMoved = data.weekly_cargo_moved ?? 0;
     }
 
     static async findOrCreate(userId) {
@@ -84,6 +87,41 @@ class UserEarnings {
         }
     }
 
+    async addWeeklyStats(distanceNm, trips, cargoMoved) {
+        const supabase = getSupabase();
+        try {
+            const { data, error } = await withRetry(async () => {
+                return await supabase
+                    .from('user_earnings')
+                    .update({
+                        weekly_distance_nm: (this.weeklyDistanceNm ?? 0) + (distanceNm || 0),
+                        weekly_trips: (this.weeklyTrips ?? 0) + (trips || 0),
+                        weekly_cargo_moved: (this.weeklyCargoMoved ?? 0) + (cargoMoved || 0),
+                        last_updated: new Date().toISOString()
+                    })
+                    .eq('id', this.id)
+                    .select()
+                    .single();
+            });
+            if (error) throw error;
+            this.weeklyDistanceNm = data.weekly_distance_nm;
+            this.weeklyTrips = data.weekly_trips;
+            this.weeklyCargoMoved = data.weekly_cargo_moved;
+            return this;
+        } catch (error) {
+            const isConnectionError = error.message?.includes('fetch failed') ||
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
+    }
+
     async addEarnings(amount) {
         const supabase = getSupabase();
         
@@ -108,6 +146,9 @@ class UserEarnings {
 
             this.totalEarnings = data.total_earnings;
             this.weeklyEarnings = data.weekly_earnings;
+            this.weeklyDistanceNm = data.weekly_distance_nm ?? this.weeklyDistanceNm;
+            this.weeklyTrips = data.weekly_trips ?? this.weeklyTrips;
+            this.weeklyCargoMoved = data.weekly_cargo_moved ?? this.weeklyCargoMoved;
             return this;
         } catch (error) {
             const isConnectionError = error.message?.includes('fetch failed') || 

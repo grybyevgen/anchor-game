@@ -34,6 +34,7 @@ const marketRoutes = require('./routes/market');
 const ratingRoutes = require('./routes/rating');
 const referralRoutes = require('./routes/referral');
 const telegramRoutes = require('./routes/telegram');
+const taskRoutes = require('./routes/tasks');
 const User = require('./models/User');
 
 const app = express();
@@ -164,6 +165,7 @@ app.use('/api/ports', portRoutes);
 app.use('/api/market', marketRoutes);
 app.use('/api/rating', ratingRoutes);
 app.use('/api/referral', referralRoutes);
+app.use('/api/tasks', taskRoutes);
 
 // Инициализация пользователя
 const { validateUserInit } = require('./middleware/validation');

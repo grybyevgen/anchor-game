@@ -12,6 +12,8 @@ class User {
         this.referredBy = data.referred_by;
         this.createdAt = data.created_at;
         this.lastActive = data.last_active;
+        this.totalFuelRefueled = data.total_fuel_refueled ?? 0;
+        this.totalHealthRepaired = data.total_health_repaired ?? 0;
     }
 
     static async findOne(query) {
@@ -191,7 +193,9 @@ class User {
                 first_name: this.firstName,
                 last_name: this.lastName,
                 coins: this.coins,
-                last_active: new Date().toISOString()
+                last_active: new Date().toISOString(),
+                total_fuel_refueled: this.totalFuelRefueled ?? 0,
+                total_health_repaired: this.totalHealthRepaired ?? 0
             };
 
             // Обновляем referral_code только если его еще нет
@@ -313,6 +317,68 @@ class User {
                                      error.code === 'ECONNRESET' ||
                                      error.code === 'ECONNREFUSED';
             
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
+    }
+
+    async addFuelRefueled(amount) {
+        const supabase = getSupabase();
+        try {
+            const { data, error } = await withRetry(async () => {
+                return await supabase
+                    .from('users')
+                    .update({
+                        total_fuel_refueled: (this.totalFuelRefueled ?? 0) + amount,
+                        last_active: new Date().toISOString()
+                    })
+                    .eq('id', this.id)
+                    .select('total_fuel_refueled')
+                    .single();
+            });
+            if (error) throw error;
+            this.totalFuelRefueled = data.total_fuel_refueled;
+            return this;
+        } catch (error) {
+            const isConnectionError = error.message?.includes('fetch failed') ||
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
+            if (isConnectionError) {
+                throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
+            }
+            throw error;
+        }
+    }
+
+    async addHealthRepaired(amount) {
+        const supabase = getSupabase();
+        try {
+            const { data, error } = await withRetry(async () => {
+                return await supabase
+                    .from('users')
+                    .update({
+                        total_health_repaired: (this.totalHealthRepaired ?? 0) + amount,
+                        last_active: new Date().toISOString()
+                    })
+                    .eq('id', this.id)
+                    .select('total_health_repaired')
+                    .single();
+            });
+            if (error) throw error;
+            this.totalHealthRepaired = data.total_health_repaired;
+            return this;
+        } catch (error) {
+            const isConnectionError = error.message?.includes('fetch failed') ||
+                                     error.message?.includes('ECONNRESET') ||
+                                     error.message?.includes('ECONNREFUSED') ||
+                                     error.message?.includes('terminated') ||
+                                     error.code === 'ECONNRESET' ||
+                                     error.code === 'ECONNREFUSED';
             if (isConnectionError) {
                 throw new Error('Временная ошибка подключения к базе данных. Попробуйте еще раз.');
             }
