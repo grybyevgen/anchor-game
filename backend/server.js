@@ -294,9 +294,10 @@ app.use(notFoundHandler);
 // Централизованная обработка ошибок (должна быть последней)
 app.use(errorHandler);
 
-// Запуск сервера
-app.listen(PORT, async () => {
-    console.log(`🚢 Сервер запущен на порту ${PORT}`);
+// Запуск сервера (0.0.0.0 нужен для Railway/Heroku и др. — иначе health check не доходит)
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, async () => {
+    console.log(`🚢 Сервер запущен на ${HOST}:${PORT}`);
     console.log(`📝 Режим: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔐 Аутентификация Telegram: ${process.env.DISABLE_TELEGRAM_AUTH === 'true' ? 'ОТКЛЮЧЕНА ⚠️' : 'ВКЛЮЧЕНА'}`);
     
