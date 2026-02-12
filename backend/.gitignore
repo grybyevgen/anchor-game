@@ -1,0 +1,15 @@
+# Секреты — не выгружать на GitHub
+.env
+.env.local
+.env.*.local
+
+# Зависимости
+node_modules/
+
+# Сборка
+dist/
+
+# Логи и ОС
+*.log
+.DS_Store
+Thumbs.db
