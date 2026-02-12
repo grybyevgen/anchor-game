@@ -10,10 +10,10 @@ import {
   BARGE_CARGO_CAPACITY,
   type ShipType,
 } from '../types/index.js';
-import { requireCompanyId } from '../middleware/auth.js';
+import { requireSessionToken } from '../middleware/auth.js';
 
 const router = Router();
-router.use(requireCompanyId);
+router.use(requireSessionToken);
 
 function mapShip(row: any, position: any) {
   const cargo = position

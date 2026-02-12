@@ -11,4 +11,5 @@ export const config = {
     webhookUrl: process.env.WEBHOOK_URL,
   },
   gameUrl: process.env.GAME_URL || '',
+  sessionSecret: process.env.SESSION_SECRET || '',
 };

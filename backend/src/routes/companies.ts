@@ -8,20 +8,40 @@ import {
 } from '../types/index.js';
 import { config } from '../config.js';
 import { validateTelegramWebAppInitData, getTelegramUserIdFromInitData } from '../services/telegramAuth.js';
+import { createSessionToken } from '../services/session.js';
+import { requireSessionToken } from '../middleware/auth.js';
 
 const router = Router();
 
 /**
  * POST /api/companies
- * Create company (name). Grants STARTING_COINS + COMPANY_SETUP_BONUS.
- * Body: { name: string }
- * Returns: company + levelRequirements
+ * Создание компании только с валидным Telegram initData. Сразу привязка к пользователю.
+ * Body: { name: string, initData: string }
+ * Returns: company + levelRequirements + sessionToken
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name } = req.body as { name?: string };
+    const { name, initData } = req.body as { name?: string; initData?: string };
     if (!name || typeof name !== 'string' || !name.trim()) {
       res.status(400).json({ error: 'Company name is required' });
+      return;
+    }
+    if (!initData || typeof initData !== 'string') {
+      res.status(400).json({ error: 'initData required. Open the game in Telegram.' });
+      return;
+    }
+    const botToken = config.telegram.botToken;
+    if (!botToken) {
+      res.status(503).json({ error: 'Telegram auth not configured' });
+      return;
+    }
+    if (!validateTelegramWebAppInitData(initData, botToken)) {
+      res.status(401).json({ error: 'Invalid init data' });
+      return;
+    }
+    const telegramUserId = getTelegramUserIdFromInitData(initData);
+    if (telegramUserId == null) {
+      res.status(400).json({ error: 'User not in init data' });
       return;
     }
     const trimmed = name.trim().slice(0, 30);
@@ -34,15 +54,27 @@ router.post('/', async (req: Request, res: Response) => {
         coins: STARTING_COINS + COMPANY_SETUP_BONUS,
         completed_trips: 0,
         total_cargo_units: 0,
+        telegram_user_id: telegramUserId,
       })
       .select()
       .single();
 
     if (error) {
+      if (error.code === '23505') {
+        res.status(409).json({ error: 'This Telegram account is already linked to another company' });
+        return;
+      }
       console.error('Create company error:', error);
       res.status(500).json({ error: error.message });
       return;
     }
+
+    const sessionSecret = config.sessionSecret;
+    if (!sessionSecret) {
+      res.status(503).json({ error: 'Session not configured' });
+      return;
+    }
+    const sessionToken = createSessionToken(company.id, telegramUserId, sessionSecret);
 
     res.status(201).json({
       company: {
@@ -54,6 +86,65 @@ router.post('/', async (req: Request, res: Response) => {
         totalCargoUnits: company.total_cargo_units,
       },
       levelRequirements: LEVEL_REQUIREMENTS,
+      sessionToken,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/companies/telegram-auth
+ * Авторизация по Telegram Mini App. Возвращает sessionToken для последующих запросов.
+ * Body: { initData: string }
+ */
+router.post('/telegram-auth', async (req: Request, res: Response) => {
+  try {
+    const { initData } = req.body as { initData?: string };
+    if (!initData || typeof initData !== 'string') {
+      res.status(400).json({ error: 'initData required' });
+      return;
+    }
+    const botToken = config.telegram.botToken;
+    if (!botToken) {
+      res.status(503).json({ error: 'Telegram auth not configured' });
+      return;
+    }
+    if (!validateTelegramWebAppInitData(initData, botToken)) {
+      res.status(401).json({ error: 'Invalid init data' });
+      return;
+    }
+    const telegramUserId = getTelegramUserIdFromInitData(initData);
+    if (telegramUserId == null) {
+      res.status(400).json({ error: 'User not in init data' });
+      return;
+    }
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('id, name, level, coins, completed_trips')
+      .eq('telegram_user_id', telegramUserId)
+      .single();
+    if (error || !company) {
+      res.status(404).json({ error: 'No company linked to this Telegram user' });
+      return;
+    }
+    const sessionSecret = config.sessionSecret;
+    if (!sessionSecret) {
+      res.status(503).json({ error: 'Session not configured' });
+      return;
+    }
+    const sessionToken = createSessionToken(company.id, telegramUserId, sessionSecret);
+    res.json({
+      companyId: company.id,
+      company: {
+        id: company.id,
+        name: company.name,
+        level: company.level,
+        coins: company.coins,
+        completedTrips: company.completed_trips,
+      },
+      sessionToken,
     });
   } catch (e) {
     console.error(e);
@@ -63,15 +154,11 @@ router.post('/', async (req: Request, res: Response) => {
 
 /**
  * GET /api/companies/me
- * Get current company. Header: X-Company-Id
+ * Текущая компания по сессионному токену (только через Telegram).
  */
-router.get('/me', async (req: Request & { companyId?: string }, res: Response) => {
+router.get('/me', requireSessionToken, async (req: Request & { companyId?: string }, res: Response) => {
   try {
-    const companyId = req.companyId;
-    if (!companyId) {
-      res.status(401).json({ error: 'Missing X-Company-Id' });
-      return;
-    }
+    const companyId = req.companyId!;
 
     const { data: company, error } = await supabase
       .from('companies')
@@ -102,15 +189,11 @@ router.get('/me', async (req: Request & { companyId?: string }, res: Response) =
 
 /**
  * PATCH /api/companies/me/level-up
- * Level up if requirements met. Body: none. Deducts coins and increments level.
+ * Level up if requirements met. Требуется сессия (Telegram).
  */
-router.patch('/me/level-up', async (req: Request & { companyId?: string }, res: Response) => {
+router.patch('/me/level-up', requireSessionToken, async (req: Request & { companyId?: string }, res: Response) => {
   try {
-    const companyId = req.companyId;
-    if (!companyId) {
-      res.status(401).json({ error: 'Missing X-Company-Id' });
-      return;
-    }
+    const companyId = req.companyId!;
 
     const { data: company, error: fetchErr } = await supabase
       .from('companies')
@@ -176,67 +259,12 @@ router.patch('/me/level-up', async (req: Request & { companyId?: string }, res: 
 });
 
 /**
- * POST /api/companies/telegram-auth
- * Авторизация по Telegram Mini App: передать initData, получить companyId если уже привязан.
- * Body: { initData: string }
- */
-router.post('/telegram-auth', async (req: Request, res: Response) => {
-  try {
-    const { initData } = req.body as { initData?: string };
-    if (!initData || typeof initData !== 'string') {
-      res.status(400).json({ error: 'initData required' });
-      return;
-    }
-    const botToken = config.telegram.botToken;
-    if (!botToken) {
-      res.status(503).json({ error: 'Telegram auth not configured' });
-      return;
-    }
-    if (!validateTelegramWebAppInitData(initData, botToken)) {
-      res.status(401).json({ error: 'Invalid init data' });
-      return;
-    }
-    const telegramUserId = getTelegramUserIdFromInitData(initData);
-    if (telegramUserId == null) {
-      res.status(400).json({ error: 'User not in init data' });
-      return;
-    }
-    const { data: company, error } = await supabase
-      .from('companies')
-      .select('id, name, level, coins, completed_trips')
-      .eq('telegram_user_id', telegramUserId)
-      .single();
-    if (error || !company) {
-      res.status(404).json({ error: 'No company linked to this Telegram user' });
-      return;
-    }
-    res.json({
-      companyId: company.id,
-      company: {
-        id: company.id,
-        name: company.name,
-        level: company.level,
-        coins: company.coins,
-        completedTrips: company.completed_trips,
-      },
-    });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-/**
  * POST /api/companies/link-telegram
- * Привязать текущую компанию к Telegram пользователю. Header: X-Company-Id. Body: { initData: string }
+ * Привязать текущую компанию (по сессии) к Telegram. Требуется сессия.
  */
-router.post('/link-telegram', async (req: Request & { companyId?: string }, res: Response) => {
+router.post('/link-telegram', requireSessionToken, async (req: Request & { companyId?: string }, res: Response) => {
   try {
-    const companyId = req.companyId;
-    if (!companyId) {
-      res.status(401).json({ error: 'Missing X-Company-Id' });
-      return;
-    }
+    const companyId = req.companyId!;
     const { initData } = req.body as { initData?: string };
     if (!initData || typeof initData !== 'string') {
       res.status(400).json({ error: 'initData required' });

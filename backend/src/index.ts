@@ -17,7 +17,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.use('/api/companies', optionalCompanyId, companiesRouter);
+app.use('/api/companies', companiesRouter);
 app.use('/api/ports', portsRouter);
 app.use('/api/ships', shipsRouter);
 app.use('/api/tasks', tasksRouter);

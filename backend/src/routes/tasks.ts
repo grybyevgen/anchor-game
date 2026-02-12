@@ -1,9 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from '../db/supabase.js';
-import { requireCompanyId } from '../middleware/auth.js';
+import { requireSessionToken } from '../middleware/auth.js';
 
 const router = Router();
-router.use(requireCompanyId);
+router.use(requireSessionToken);
 
 const DAILY_TEMPLATES = [
   { task_key: 'daily-trips-1', title: 'Совершить 2 рейса', description: 'Доставьте груз между портами', type: 'daily' as const, target: 2, reward: 500, icon: 'trips' },
