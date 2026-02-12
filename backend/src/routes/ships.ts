@@ -504,7 +504,7 @@ router.post('/:id/unload', async (req: Request & { companyId?: string }, res: Re
 
     const { data: company } = await supabase
       .from('companies')
-      .select('coins, completed_trips, total_cargo_units')
+      .select('level, coins, completed_trips, total_cargo_units')
       .eq('id', companyId)
       .single();
 
