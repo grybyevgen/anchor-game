@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from '../db/supabase.js';
+import { addWeeklyEarnings } from '../services/companyEarnings.js';
 import { calculateCargoPrice } from '../services/priceCalculator.js';
 import {
   SHIP_PRICES,
@@ -516,6 +517,8 @@ router.post('/:id/unload', async (req: Request & { companyId?: string }, res: Re
     const bonus = REVENUE_BONUS[company.level] ?? 0;
     totalEarnings = Math.round(totalEarnings * (1 + bonus));
     const totalCargo = cargoOil + cargoMat + cargoProv;
+
+    await addWeeklyEarnings(companyId, totalEarnings);
 
     await supabase
       .from('ports')

@@ -5,9 +5,11 @@ import {
   REVENUE_BONUS,
   STARTING_COINS,
   COMPANY_SETUP_BONUS,
+  REFERRAL_REWARD_COINS,
 } from '../types/index.js';
 import { config } from '../config.js';
-import { validateTelegramWebAppInitData, getTelegramUserIdFromInitData } from '../services/telegramAuth.js';
+import { validateTelegramWebAppInitData, getTelegramUserIdFromInitData, getStartParamFromInitData } from '../services/telegramAuth.js';
+import { addWeeklyEarnings } from '../services/companyEarnings.js';
 import { createSessionToken } from '../services/session.js';
 import { requireSessionToken } from '../middleware/auth.js';
 
@@ -67,6 +69,23 @@ router.post('/', async (req: Request, res: Response) => {
       console.error('Create company error:', error);
       res.status(500).json({ error: error.message });
       return;
+    }
+
+    // Реферальная награда: +500 монет пригласившему (как в anchor)
+    const referrerId = getStartParamFromInitData(initData);
+    if (referrerId && referrerId !== company.id) {
+      const { data: referrer } = await supabase
+        .from('companies')
+        .select('id, coins')
+        .eq('id', referrerId)
+        .single();
+      if (referrer) {
+        await supabase
+          .from('companies')
+          .update({ coins: referrer.coins + REFERRAL_REWARD_COINS })
+          .eq('id', referrerId);
+        await addWeeklyEarnings(referrerId, REFERRAL_REWARD_COINS);
+      }
     }
 
     const sessionSecret = config.sessionSecret;
@@ -153,6 +172,87 @@ router.post('/telegram-auth', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/companies/me/telegram-photo
+ * Фото профиля Telegram текущего пользователя (прокси, чтобы не светить bot token).
+ */
+router.get('/me/telegram-photo', requireSessionToken, async (req: Request & { companyId?: string }, res: Response) => {
+  try {
+    const companyId = req.companyId!;
+    const botToken = config.telegram.botToken;
+    if (!botToken) {
+      res.status(503).json({ error: 'Telegram not configured' });
+      return;
+    }
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('telegram_user_id')
+      .eq('id', companyId)
+      .single();
+    if (error || !company?.telegram_user_id) {
+      res.status(404).send();
+      return;
+    }
+    const tgUserId = company.telegram_user_id as number;
+    const photosRes = await fetch(
+      `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${tgUserId}&limit=1`
+    );
+    const photosData = (await photosRes.json()) as { ok?: boolean; result?: { photos?: { file_id: string }[][] } };
+    if (!photosData?.ok || !photosData.result?.photos?.length) {
+      res.status(404).send();
+      return;
+    }
+    const fileId = photosData.result.photos[0][0]?.file_id;
+    if (!fileId) {
+      res.status(404).send();
+      return;
+    }
+    const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+    const fileData = (await fileRes.json()) as { ok?: boolean; result?: { file_path?: string } };
+    if (!fileData?.ok || !fileData.result?.file_path) {
+      res.status(404).send();
+      return;
+    }
+    const imageUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+    const imageRes = await fetch(imageUrl);
+    if (!imageRes.ok) {
+      res.status(502).send();
+      return;
+    }
+    const contentType = imageRes.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    const buffer = Buffer.from(await imageRes.arrayBuffer());
+    res.send(buffer);
+  } catch (e) {
+    console.error(e);
+    res.status(500).send();
+  }
+});
+
+/**
+ * GET /api/companies/me/referral-link
+ * Реферальная ссылка (как в anchor). Backend собирает ссылку — на фронте не нужны env.
+ */
+router.get('/me/referral-link', requireSessionToken, async (req: Request & { companyId?: string }, res: Response) => {
+  try {
+    const companyId = req.companyId!;
+    const botUsername = config.telegram.botUsername;
+    const appShortName = config.telegram.appShortName;
+    const gameUrl = config.gameUrl || 'https://anchor-game.com';
+
+    const referralLink =
+      botUsername && appShortName
+        ? `https://t.me/${botUsername}/${appShortName}?startapp=${companyId}`
+        : `${gameUrl.replace(/\/$/, '')}/ref/${companyId}`;
+
+    res.json({ referralLink, referralCode: companyId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * GET /api/companies/me
  * Текущая компания по сессионному токену (только через Telegram).
  */
@@ -160,6 +260,7 @@ router.get('/me', requireSessionToken, async (req: Request & { companyId?: strin
   try {
     const companyId = req.companyId!;
 
+    const { getWeeklyEarnings } = await import('../services/companyEarnings.js');
     const { data: company, error } = await supabase
       .from('companies')
       .select('id, name, level, coins, completed_trips, total_cargo_units')
@@ -171,6 +272,8 @@ router.get('/me', requireSessionToken, async (req: Request & { companyId?: strin
       return;
     }
 
+    const weeklyEarned = await getWeeklyEarnings(companyId);
+
     res.json({
       id: company.id,
       name: company.name,
@@ -178,6 +281,7 @@ router.get('/me', requireSessionToken, async (req: Request & { companyId?: strin
       coins: company.coins,
       completedTrips: company.completed_trips,
       totalCargoUnits: company.total_cargo_units,
+      weeklyEarned,
       levelRequirements: LEVEL_REQUIREMENTS,
       revenueBonus: REVENUE_BONUS[company.level] ?? 0,
     });

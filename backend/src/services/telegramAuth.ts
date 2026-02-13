@@ -29,3 +29,14 @@ export function getTelegramUserIdFromInitData(initData: string): number | null {
     return null;
   }
 }
+
+/** start_param из initData (при открытии Mini App через ?startapp=REFERRER_ID). */
+export function getStartParamFromInitData(initData: string): string | null {
+  try {
+    const params = new URLSearchParams(initData);
+    const startParam = params.get('start_param');
+    return startParam && startParam.trim().length > 0 ? startParam.trim() : null;
+  } catch {
+    return null;
+  }
+}

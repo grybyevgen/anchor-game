@@ -28,12 +28,20 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
     if (text === '/start') {
       const gameUrl = config.gameUrl || 'https://grybyevgen.github.io/anchor-frontend/';
+      const welcomeText =
+        '⛵ **ANCHOR** — морская торговая игра\n\n' +
+        'Создай компанию, покупай корабли, вози грузы между портами и поднимайся в рейтинге.\n\n' +
+        'Нажми кнопку ниже, чтобы начать:';
       await fetch(`https://api.telegram.org/bot${config.telegram.botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `⛵ Добро пожаловать в ANCHOR!\n\nИграть: ${gameUrl}`,
+          text: welcomeText,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[{ text: '🚀 Запустить', web_app: { url: gameUrl } }]],
+          },
         }),
       });
     }

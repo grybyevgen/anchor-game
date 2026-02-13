@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from '../db/supabase.js';
+import { addWeeklyEarnings } from '../services/companyEarnings.js';
 import { requireSessionToken } from '../middleware/auth.js';
 
 const router = Router();
@@ -217,6 +218,8 @@ router.post('/:id/claim', async (req: Request & { companyId?: string }, res: Res
       .from('tasks')
       .update({ claimed_at: new Date().toISOString() })
       .eq('id', taskId);
+
+    await addWeeklyEarnings(companyId, task.reward);
 
     await supabase
       .from('companies')

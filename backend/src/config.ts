@@ -9,6 +9,8 @@ export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN,
     webhookUrl: process.env.WEBHOOK_URL,
+    botUsername: process.env.TELEGRAM_BOT_USERNAME || '',
+    appShortName: process.env.TELEGRAM_APP_SHORT_NAME || 'anchor',
   },
   gameUrl: process.env.GAME_URL || '',
   sessionSecret: process.env.SESSION_SECRET || '',
