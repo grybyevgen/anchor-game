@@ -15,6 +15,13 @@ function getWeekStartDate(): string {
   return weekStart.toISOString().split('T')[0];
 }
 
+function formatPlayerName(firstName?: string | null, lastName?: string | null): string {
+  const first = (firstName ?? '').trim();
+  const last = (lastName ?? '').trim();
+  const name = [first, last].filter(Boolean).join(' ').trim();
+  return name || 'Капитан';
+}
+
 const router = Router();
 router.use(optionalCompanyId);
 
@@ -30,7 +37,7 @@ router.get('/', async (req: Request & { companyId?: string }, res: Response) => 
 
     const { data: companies, error } = await supabase
       .from('companies')
-      .select('id, name, level, coins')
+      .select('id, name, level, coins, telegram_first_name, telegram_last_name')
       .order('coins', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -40,12 +47,12 @@ router.get('/', async (req: Request & { companyId?: string }, res: Response) => 
     }
 
     const currentCompanyId = req.companyId;
-    const list = (companies || []).map((c, i) => {
+    const list = (companies || []).map((c: { id: string; name: string; level: number; coins: number; telegram_first_name?: string | null; telegram_last_name?: string | null }, i: number) => {
       const earnedCoins = Math.max(0, c.coins - INITIAL_BALANCE);
       return {
         id: c.id,
         rank: offset + i + 1,
-        playerName: 'Капитан',
+        playerName: formatPlayerName(c.telegram_first_name, c.telegram_last_name),
         companyName: c.name,
         companyLevel: c.level,
         netProfit: earnedCoins,
@@ -76,7 +83,7 @@ router.get('/weekly', async (req: Request & { companyId?: string }, res: Respons
       .select(
         `
         weekly_earnings,
-        companies:company_id (id, name, level)
+        companies:company_id (id, name, level, telegram_first_name, telegram_last_name)
       `
       )
       .eq('week_start_date', weekStartDate)
@@ -89,18 +96,64 @@ router.get('/weekly', async (req: Request & { companyId?: string }, res: Respons
     }
 
     const currentCompanyId = req.companyId;
-    type Row = { weekly_earnings: number; companies: { id: string; name: string; level: number } | { id: string; name: string; level: number }[] | null };
+    type Company = { id: string; name: string; level: number; telegram_first_name?: string | null; telegram_last_name?: string | null };
+    type Row = { weekly_earnings: number; companies: Company | Company[] | null };
     const list = (earnings || []).map((e: Row, i: number) => {
       const raw = e.companies;
       const c = Array.isArray(raw) ? raw[0] ?? null : raw;
       return {
         id: c?.id ?? '',
         rank: offset + i + 1,
-        playerName: 'Капитан',
+        playerName: c ? formatPlayerName(c.telegram_first_name, c.telegram_last_name) : 'Капитан',
         companyName: c?.name ?? '',
         companyLevel: c?.level ?? 1,
         netProfit: e.weekly_earnings ?? 0,
         isCurrentUser: currentCompanyId ? c?.id === currentCompanyId : false,
+      };
+    });
+
+    res.json({ leaderboard: list });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/leaderboard/friends
+ * Друзья = компании, приглашённые текущим пользователем (referred_by_company_id = current).
+ * Сортировка по заработанным монетам.
+ */
+router.get('/friends', async (req: Request & { companyId?: string }, res: Response) => {
+  try {
+    const currentCompanyId = req.companyId;
+    if (!currentCompanyId) {
+      res.json({ leaderboard: [] });
+      return;
+    }
+
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('id, name, level, coins, telegram_first_name, telegram_last_name')
+      .eq('referred_by_company_id', currentCompanyId)
+      .order('coins', { ascending: false });
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    const list = (companies || []).map((c: { id: string; name: string; level: number; coins: number; telegram_first_name?: string | null; telegram_last_name?: string | null }, i: number) => {
+      const earnedCoins = Math.max(0, c.coins - INITIAL_BALANCE);
+      return {
+        id: c.id,
+        rank: i + 1,
+        playerName: formatPlayerName(c.telegram_first_name, c.telegram_last_name),
+        companyName: c.name,
+        companyLevel: c.level,
+        netProfit: earnedCoins,
+        isCurrentUser: false,
+        isFriend: true,
       };
     });
 

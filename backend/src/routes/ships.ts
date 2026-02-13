@@ -16,6 +16,8 @@ import { requireSessionToken } from '../middleware/auth.js';
 const router = Router();
 router.use(requireSessionToken);
 
+const TRAVEL_TIME_SEC = 15;
+
 function mapShip(row: any, position: any) {
   const cargo = position
     ? {
@@ -24,6 +26,51 @@ function mapShip(row: any, position: any) {
         provisions: position.cargo_provisions ?? 0,
       }
     : { oil: 0, materials: 0, provisions: 0 };
+
+  if (!position) {
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      fuel: row.fuel,
+      health: row.health,
+      morale: row.morale,
+      maxFuel: row.max_fuel,
+      maxHealth: row.max_health,
+      maxMorale: row.max_morale,
+      position: null,
+    };
+  }
+
+  let currentPosition = { x: Number(position.pos_x), y: Number(position.pos_y) };
+  let remainingSeconds = 0;
+
+  if (position.is_moving && position.dest_port_id) {
+    const destX = Number(position.dest_x);
+    const destY = Number(position.dest_y);
+
+    if (position.departed_at) {
+      const departedAt = new Date(position.departed_at).getTime();
+      const elapsedSec = (Date.now() - departedAt) / 1000;
+
+      if (elapsedSec >= TRAVEL_TIME_SEC) {
+        remainingSeconds = 0;
+        currentPosition = { x: destX, y: destY };
+      } else {
+        const progress = elapsedSec / TRAVEL_TIME_SEC;
+        const startX = Number(position.pos_x);
+        const startY = Number(position.pos_y);
+        currentPosition = {
+          x: startX + (destX - startX) * progress,
+          y: startY + (destY - startY) * progress,
+        };
+        remainingSeconds = Math.max(0, TRAVEL_TIME_SEC - elapsedSec);
+      }
+    } else {
+      // Legacy: departed_at отсутствует — считаем только что вышло
+      remainingSeconds = TRAVEL_TIME_SEC;
+    }
+  }
 
   return {
     id: row.id,
@@ -35,25 +82,26 @@ function mapShip(row: any, position: any) {
     maxFuel: row.max_fuel,
     maxHealth: row.max_health,
     maxMorale: row.max_morale,
-    position: position
-      ? {
-          portId: position.port_id,
-          previousPortId: position.previous_port_id,
-          isMoving: position.is_moving,
-          currentPosition: { x: Number(position.pos_x), y: Number(position.pos_y) },
-          destination: position.dest_port_id
-            ? { x: Number(position.dest_x), y: Number(position.dest_y) }
-            : undefined,
-          destinationPortId: position.dest_port_id,
-          cargo,
-        }
-      : null,
+    position: {
+      portId: position.port_id,
+      previousPortId: position.previous_port_id,
+      isMoving: position.is_moving,
+      currentPosition,
+      destination: position.dest_port_id
+        ? { x: Number(position.dest_x), y: Number(position.dest_y) }
+        : undefined,
+      destinationPortId: position.dest_port_id,
+      remainingSeconds,
+      travelTimeSec: TRAVEL_TIME_SEC,
+      cargo,
+    },
   };
 }
 
 /**
  * GET /api/ships
  * List ships for company with positions and cargo.
+ * Для судов в пути: авто-прибытие по истечении 15 сек, позиция считается на бекенде.
  */
 router.get('/', async (req: Request & { companyId?: string }, res: Response) => {
   try {
@@ -79,7 +127,41 @@ router.get('/', async (req: Request & { companyId?: string }, res: Response) => 
       .select('*')
       .in('ship_id', ships.map((s) => s.id));
 
-    const posMap = new Map((positions || []).map((p) => [p.ship_id, p]));
+    const posList = positions || [];
+    const posMap = new Map(posList.map((p) => [p.ship_id, p]));
+
+    // Auto-arrive: суда в пути дольше 15 сек считаются прибывшими
+    for (const pos of posList) {
+      if (!pos.is_moving || !pos.departed_at || !pos.dest_port_id) continue;
+      const elapsedSec = (Date.now() - new Date(pos.departed_at).getTime()) / 1000;
+      if (elapsedSec >= TRAVEL_TIME_SEC) {
+        await supabase
+          .from('ship_positions')
+          .update({
+            port_id: pos.dest_port_id,
+            previous_port_id: pos.previous_port_id,
+            is_moving: false,
+            pos_x: pos.dest_x,
+            pos_y: pos.dest_y,
+            dest_port_id: null,
+            dest_x: null,
+            dest_y: null,
+            departed_at: null,
+          })
+          .eq('ship_id', pos.ship_id);
+
+        const updated = { ...pos };
+        updated.port_id = pos.dest_port_id;
+        updated.is_moving = false;
+        updated.pos_x = pos.dest_x;
+        updated.pos_y = pos.dest_y;
+        updated.dest_port_id = null;
+        updated.dest_x = null;
+        updated.dest_y = null;
+        updated.departed_at = null;
+        posMap.set(pos.ship_id, updated);
+      }
+    }
 
     const { data: ports } = await supabase.from('ports').select('id, name, type, x, y, oil, materials, provisions');
 
@@ -261,6 +343,7 @@ router.post('/:id/send', async (req: Request & { companyId?: string }, res: Resp
         dest_port_id: destPort.id,
         dest_x: destPort.x,
         dest_y: destPort.y,
+        departed_at: new Date().toISOString(),
       })
       .eq('ship_id', shipId);
 

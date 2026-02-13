@@ -8,7 +8,7 @@ import {
   REFERRAL_REWARD_COINS,
 } from '../types/index.js';
 import { config } from '../config.js';
-import { validateTelegramWebAppInitData, getTelegramUserIdFromInitData, getStartParamFromInitData } from '../services/telegramAuth.js';
+import { validateTelegramWebAppInitData, getTelegramUserIdFromInitData, getTelegramUserFromInitData, getStartParamFromInitData } from '../services/telegramAuth.js';
 import { addWeeklyEarnings } from '../services/companyEarnings.js';
 import { createSessionToken } from '../services/session.js';
 import { requireSessionToken } from '../middleware/auth.js';
@@ -41,12 +41,21 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(401).json({ error: 'Invalid init data' });
       return;
     }
-    const telegramUserId = getTelegramUserIdFromInitData(initData);
-    if (telegramUserId == null) {
+    const tgUser = getTelegramUserFromInitData(initData);
+    if (!tgUser) {
       res.status(400).json({ error: 'User not in init data' });
       return;
     }
     const trimmed = name.trim().slice(0, 30);
+    const tgFirstName = tgUser.first_name?.trim().slice(0, 64) ?? null;
+    const tgLastName = tgUser.last_name?.trim().slice(0, 64) ?? null;
+
+    const referrerId = getStartParamFromInitData(initData);
+    let referredByCompanyId: string | null = null;
+    if (referrerId && referrerId.trim() && referrerId !== '') {
+      const { data: referrer } = await supabase.from('companies').select('id').eq('id', referrerId).single();
+      if (referrer) referredByCompanyId = referrer.id;
+    }
 
     const { data: company, error } = await supabase
       .from('companies')
@@ -56,7 +65,10 @@ router.post('/', async (req: Request, res: Response) => {
         coins: STARTING_COINS + COMPANY_SETUP_BONUS,
         completed_trips: 0,
         total_cargo_units: 0,
-        telegram_user_id: telegramUserId,
+        telegram_user_id: tgUser.id,
+        telegram_first_name: tgFirstName,
+        telegram_last_name: tgLastName,
+        referred_by_company_id: referredByCompanyId,
       })
       .select()
       .single();
@@ -72,19 +84,18 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Реферальная награда: +500 монет пригласившему (как в anchor)
-    const referrerId = getStartParamFromInitData(initData);
-    if (referrerId && referrerId !== company.id) {
+    if (referredByCompanyId && referredByCompanyId !== company.id) {
       const { data: referrer } = await supabase
         .from('companies')
         .select('id, coins')
-        .eq('id', referrerId)
+        .eq('id', referredByCompanyId)
         .single();
       if (referrer) {
         await supabase
           .from('companies')
           .update({ coins: referrer.coins + REFERRAL_REWARD_COINS })
-          .eq('id', referrerId);
-        await addWeeklyEarnings(referrerId, REFERRAL_REWARD_COINS);
+          .eq('id', referredByCompanyId);
+        await addWeeklyEarnings(referredByCompanyId, REFERRAL_REWARD_COINS);
       }
     }
 
@@ -171,6 +182,57 @@ router.post('/telegram-auth', async (req: Request, res: Response) => {
   }
 });
 
+async function fetchTelegramAvatarByUserId(tgUserId: number, botToken: string, res: Response): Promise<boolean> {
+  const photosRes = await fetch(
+    `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${tgUserId}&limit=1`
+  );
+  const photosData = (await photosRes.json()) as { ok?: boolean; result?: { photos?: { file_id: string }[][] } };
+  if (!photosData?.ok || !photosData.result?.photos?.length) return false;
+  const fileId = photosData.result.photos[0][0]?.file_id;
+  if (!fileId) return false;
+  const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+  const fileData = (await fileRes.json()) as { ok?: boolean; result?: { file_path?: string } };
+  if (!fileData?.ok || !fileData.result?.file_path) return false;
+  const imageUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+  const imageRes = await fetch(imageUrl);
+  if (!imageRes.ok) return false;
+  const contentType = imageRes.headers.get('content-type') || 'image/jpeg';
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  const buffer = Buffer.from(await imageRes.arrayBuffer());
+  res.send(buffer);
+  return true;
+}
+
+/**
+ * GET /api/companies/:id/avatar
+ * Фото профиля Telegram компании (для рейтинга). Публичный.
+ */
+router.get('/:id/avatar', async (req: Request, res: Response) => {
+  try {
+    const companyId = req.params.id;
+    const botToken = config.telegram.botToken;
+    if (!botToken) {
+      res.status(503).send();
+      return;
+    }
+    const { data: company, error } = await supabase
+      .from('companies')
+      .select('telegram_user_id')
+      .eq('id', companyId)
+      .single();
+    if (error || !company?.telegram_user_id) {
+      res.status(404).send();
+      return;
+    }
+    const ok = await fetchTelegramAvatarByUserId(company.telegram_user_id as number, botToken, res);
+    if (!ok) res.status(404).send();
+  } catch (e) {
+    console.error(e);
+    res.status(500).send();
+  }
+});
+
 /**
  * GET /api/companies/me/telegram-photo
  * Фото профиля Telegram текущего пользователя (прокси, чтобы не светить bot token).
@@ -192,37 +254,8 @@ router.get('/me/telegram-photo', requireSessionToken, async (req: Request & { co
       res.status(404).send();
       return;
     }
-    const tgUserId = company.telegram_user_id as number;
-    const photosRes = await fetch(
-      `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${tgUserId}&limit=1`
-    );
-    const photosData = (await photosRes.json()) as { ok?: boolean; result?: { photos?: { file_id: string }[][] } };
-    if (!photosData?.ok || !photosData.result?.photos?.length) {
-      res.status(404).send();
-      return;
-    }
-    const fileId = photosData.result.photos[0][0]?.file_id;
-    if (!fileId) {
-      res.status(404).send();
-      return;
-    }
-    const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-    const fileData = (await fileRes.json()) as { ok?: boolean; result?: { file_path?: string } };
-    if (!fileData?.ok || !fileData.result?.file_path) {
-      res.status(404).send();
-      return;
-    }
-    const imageUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-    const imageRes = await fetch(imageUrl);
-    if (!imageRes.ok) {
-      res.status(502).send();
-      return;
-    }
-    const contentType = imageRes.headers.get('content-type') || 'image/jpeg';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    const buffer = Buffer.from(await imageRes.arrayBuffer());
-    res.send(buffer);
+    const ok = await fetchTelegramAvatarByUserId(company.telegram_user_id as number, botToken, res);
+    if (!ok) res.status(404).send();
   } catch (e) {
     console.error(e);
     res.status(500).send();
@@ -383,14 +416,20 @@ router.post('/link-telegram', requireSessionToken, async (req: Request & { compa
       res.status(401).json({ error: 'Invalid init data' });
       return;
     }
-    const telegramUserId = getTelegramUserIdFromInitData(initData);
-    if (telegramUserId == null) {
+    const tgUser = getTelegramUserFromInitData(initData);
+    if (!tgUser) {
       res.status(400).json({ error: 'User not in init data' });
       return;
     }
+    const tgFirstName = tgUser.first_name?.trim().slice(0, 64) ?? null;
+    const tgLastName = tgUser.last_name?.trim().slice(0, 64) ?? null;
     const { error } = await supabase
       .from('companies')
-      .update({ telegram_user_id: telegramUserId })
+      .update({
+        telegram_user_id: tgUser.id,
+        telegram_first_name: tgFirstName,
+        telegram_last_name: tgLastName,
+      })
       .eq('id', companyId);
     if (error) {
       if (error.code === '23505') {
