@@ -104,7 +104,7 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(503).json({ error: 'Session not configured' });
       return;
     }
-    const sessionToken = createSessionToken(company.id, telegramUserId, sessionSecret);
+    const sessionToken = createSessionToken(company.id, tgUser.id, sessionSecret);
 
     res.status(201).json({
       company: {
