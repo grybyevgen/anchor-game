@@ -89,8 +89,10 @@ router.get('/weekly', async (req: Request & { companyId?: string }, res: Respons
     }
 
     const currentCompanyId = req.companyId;
-    const list = (earnings || []).map((e: { weekly_earnings: number; companies: { id: string; name: string; level: number } | null }, i: number) => {
-      const c = e.companies;
+    type Row = { weekly_earnings: number; companies: { id: string; name: string; level: number } | { id: string; name: string; level: number }[] | null };
+    const list = (earnings || []).map((e: Row, i: number) => {
+      const raw = e.companies;
+      const c = Array.isArray(raw) ? raw[0] ?? null : raw;
       return {
         id: c?.id ?? '',
         rank: offset + i + 1,
