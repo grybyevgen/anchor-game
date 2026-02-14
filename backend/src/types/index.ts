@@ -52,7 +52,7 @@ export const MORALE_COST_PER_TRIP: Record<ShipType, number> = {
 };
 
 export const BARGE_CARGO_CAPACITY = 30;
-export const STARTING_COINS = 12500;
-export const COMPANY_SETUP_BONUS = 6000;
+export const STARTING_COINS = 0;
+export const COMPANY_SETUP_BONUS = 1000;
 export const REFERRAL_REWARD_COINS = 500;
 export const TRAVEL_TIME_SECONDS = 8;
