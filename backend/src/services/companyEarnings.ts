@@ -59,6 +59,18 @@ export async function addWeeklyEarnings(companyId: string, amount: number): Prom
       weekly_earnings: amount,
     });
   }
+
+  // Обновляем total_earned в companies (для рейтинга "Общий", как в anchor)
+  const { data: company } = await supabase
+    .from('companies')
+    .select('total_earned')
+    .eq('id', companyId)
+    .single();
+  const currentTotal = company?.total_earned ?? 0;
+  await supabase
+    .from('companies')
+    .update({ total_earned: currentTotal + amount })
+    .eq('id', companyId);
 }
 
 export async function getWeeklyEarnings(companyId: string): Promise<number> {
