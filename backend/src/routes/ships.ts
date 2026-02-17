@@ -956,11 +956,20 @@ router.post('/:id/tow', async (req: Request & { companyId?: string }, res: Respo
       return;
     }
 
+    const { data: currentPos } = await supabase
+      .from('ship_positions')
+      .select('port_id')
+      .eq('ship_id', shipId)
+      .single();
+
+    // При буксировке сохраняем порт отправления в previous_port_id, чтобы можно было выгрузить груз в новом порту
+    const previousPortId = currentPos?.port_id ?? null;
+
     await supabase
       .from('ship_positions')
       .update({
         port_id: oilPort.id,
-        previous_port_id: null,
+        previous_port_id: previousPortId,
         is_moving: false,
         pos_x: oilPort.x,
         pos_y: oilPort.y,
