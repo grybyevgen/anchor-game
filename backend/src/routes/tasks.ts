@@ -24,6 +24,61 @@ const MONTHLY_TEMPLATES = [
   { task_key: 'monthly-ships-1', title: 'Владеть 5 суднами', description: 'Соберите флот из 5 судов', type: 'monthly' as const, target: 5, reward: 8000, icon: 'ship' },
 ];
 
+/** Start of current day in UTC (00:00:00.000). */
+function startOfTodayUTC(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Start of current week (Monday) in UTC. */
+function startOfWeekUTC(): Date {
+  const d = new Date();
+  const day = d.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+  d.setUTCDate(d.getUTCDate() + diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Start of current month in UTC. */
+function startOfMonthUTC(): Date {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Remove unclaimed tasks that are from a previous period (day/week/month).
+ * After this, ensureTasks will create new tasks for the current period.
+ */
+async function resetExpiredTasks(companyId: string): Promise<void> {
+  const dayStart = startOfTodayUTC();
+  const weekStart = startOfWeekUTC();
+  const monthStart = startOfMonthUTC();
+
+  const { data: existing } = await supabase
+    .from('tasks')
+    .select('id, type, created_at')
+    .eq('company_id', companyId)
+    .is('claimed_at', null);
+
+  if (!existing?.length) return;
+
+  const toDelete: string[] = [];
+  for (const t of existing) {
+    const created = new Date(t.created_at);
+    if (t.type === 'daily' && created < dayStart) toDelete.push(t.id);
+    else if (t.type === 'weekly' && created < weekStart) toDelete.push(t.id);
+    else if (t.type === 'monthly' && created < monthStart) toDelete.push(t.id);
+  }
+
+  if (toDelete.length) {
+    await supabase.from('tasks').delete().in('id', toDelete);
+  }
+}
+
 async function ensureTasks(companyId: string, company: { completed_trips: number; coins: number }, shipCount: number, totalCargo: number) {
   const now = new Date();
   const { data: existing } = await supabase
@@ -99,7 +154,8 @@ async function ensureTasks(companyId: string, company: { completed_trips: number
 
 /**
  * GET /api/tasks
- * List tasks for company. Progress is synced from company stats. Resets handled by cron or on next day (optional).
+ * List tasks for company. Progress is synced from company stats.
+ * Daily/weekly/monthly tasks are reset when their period has passed (on each request).
  */
 router.get('/', async (req: Request & { companyId?: string }, res: Response) => {
   try {
@@ -123,6 +179,7 @@ router.get('/', async (req: Request & { companyId?: string }, res: Response) => 
 
     const totalCargo = company.total_cargo_units ?? 0;
 
+    await resetExpiredTasks(companyId);
     await ensureTasks(companyId, {
       completed_trips: company.completed_trips,
       coins: company.coins,
