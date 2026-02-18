@@ -80,7 +80,6 @@ async function resetExpiredTasks(companyId: string): Promise<void> {
 }
 
 async function ensureTasks(companyId: string, company: { completed_trips: number; coins: number }, shipCount: number, totalCargo: number) {
-  const now = new Date();
   const { data: existing } = await supabase
     .from('tasks')
     .select('task_key, type, created_at')
@@ -89,60 +88,68 @@ async function ensureTasks(companyId: string, company: { completed_trips: number
   const existingKeys = new Set((existing || []).map((t) => t.task_key));
   const toInsert: Array<Record<string, any>> = [];
 
+  // New period tasks: progress 0, store baseline so progress = (current - baseline) in this period
+  const baseline = {
+    trips: company.completed_trips,
+    coins: company.coins,
+    cargo: totalCargo,
+    ships: shipCount,
+  };
+
   for (const t of DAILY_TEMPLATES) {
     if (!existingKeys.has(t.task_key)) {
-      let progress = 0;
-      if (t.task_key.includes('trips')) progress = Math.min(company.completed_trips, t.target);
-      else if (t.task_key.includes('coins')) progress = Math.min(company.coins, t.target);
-      else if (t.task_key.includes('cargo')) progress = Math.min(totalCargo, t.target);
       toInsert.push({
         company_id: companyId,
         task_key: t.task_key,
         title: t.title,
         description: t.description,
         type: t.type,
-        progress,
+        progress: 0,
         target: t.target,
         reward: t.reward,
-        completed: progress >= t.target,
+        completed: false,
+        baseline_trips: baseline.trips,
+        baseline_coins: baseline.coins,
+        baseline_cargo: baseline.cargo,
+        baseline_ships: baseline.ships,
       });
     }
   }
   for (const t of WEEKLY_TEMPLATES) {
     if (!existingKeys.has(t.task_key)) {
-      let progress = 0;
-      if (t.task_key.includes('trips')) progress = Math.min(company.completed_trips, t.target);
-      else if (t.task_key.includes('ships')) progress = Math.min(shipCount, t.target);
-      else if (t.task_key.includes('cargo')) progress = Math.min(totalCargo, t.target);
       toInsert.push({
         company_id: companyId,
         task_key: t.task_key,
         title: t.title,
         description: t.description,
         type: t.type,
-        progress,
+        progress: 0,
         target: t.target,
         reward: t.reward,
-        completed: progress >= t.target,
+        completed: false,
+        baseline_trips: baseline.trips,
+        baseline_coins: baseline.coins,
+        baseline_cargo: baseline.cargo,
+        baseline_ships: baseline.ships,
       });
     }
   }
   for (const t of MONTHLY_TEMPLATES) {
     if (!existingKeys.has(t.task_key)) {
-      let progress = 0;
-      if (t.task_key.includes('trips')) progress = Math.min(company.completed_trips, t.target);
-      else if (t.task_key.includes('coins')) progress = Math.min(company.coins, t.target);
-      else if (t.task_key.includes('ships')) progress = Math.min(shipCount, t.target);
       toInsert.push({
         company_id: companyId,
         task_key: t.task_key,
         title: t.title,
         description: t.description,
         type: t.type,
-        progress,
+        progress: 0,
         target: t.target,
         reward: t.reward,
-        completed: progress >= t.target,
+        completed: false,
+        baseline_trips: baseline.trips,
+        baseline_coins: baseline.coins,
+        baseline_cargo: baseline.cargo,
+        baseline_ships: baseline.ships,
       });
     }
   }
@@ -191,13 +198,22 @@ router.get('/', async (req: Request & { companyId?: string }, res: Response) => 
       .eq('company_id', companyId)
       .is('claimed_at', null);
 
-    // Update progress from current stats
+    // Progress = growth in this period (current - baseline). Baseline set when task created for the period.
     const updated = (tasks || []).map((t) => {
+      const baseTrips = t.baseline_trips ?? 0;
+      const baseCoins = t.baseline_coins ?? 0;
+      const baseCargo = t.baseline_cargo ?? 0;
+      const baseShips = t.baseline_ships ?? 0;
       let progress = t.progress;
-      if (t.task_key?.includes('trips')) progress = Math.min(company.completed_trips, t.target);
-      else if (t.task_key?.includes('coins')) progress = Math.min(company.coins, t.target);
-      else if (t.task_key?.includes('ships')) progress = Math.min(shipCount ?? 0, t.target);
-      else if (t.task_key?.includes('cargo')) progress = Math.min(totalCargo, t.target);
+      if (t.task_key?.includes('trips')) {
+        progress = Math.max(0, Math.min((company.completed_trips ?? 0) - baseTrips, t.target));
+      } else if (t.task_key?.includes('coins')) {
+        progress = Math.max(0, Math.min((company.coins ?? 0) - baseCoins, t.target));
+      } else if (t.task_key?.includes('ships')) {
+        progress = Math.max(0, Math.min((shipCount ?? 0) - baseShips, t.target));
+      } else if (t.task_key?.includes('cargo')) {
+        progress = Math.max(0, Math.min(totalCargo - baseCargo, t.target));
+      }
       return { ...t, progress, completed: progress >= t.target };
     });
 
