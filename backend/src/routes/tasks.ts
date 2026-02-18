@@ -50,8 +50,9 @@ function startOfMonthUTC(): Date {
 }
 
 /**
- * Remove unclaimed tasks that are from a previous period (day/week/month).
- * After this, ensureTasks will create new tasks for the current period.
+ * Remove tasks from a previous period (day/week/month) so they can be repeated.
+ * We delete by period regardless of claimed_at: old rows free (company_id, task_key)
+ * so ensureTasks can create new ones for the current period.
  */
 async function resetExpiredTasks(companyId: string): Promise<void> {
   const dayStart = startOfTodayUTC();
@@ -61,8 +62,7 @@ async function resetExpiredTasks(companyId: string): Promise<void> {
   const { data: existing } = await supabase
     .from('tasks')
     .select('id, type, created_at')
-    .eq('company_id', companyId)
-    .is('claimed_at', null);
+    .eq('company_id', companyId);
 
   if (!existing?.length) return;
 
